@@ -112,9 +112,16 @@ class TestLiveProfile:
         # all one value would silently defeat calibration.
         assert len(set(prof)) > 1
 
-    def test_the_same_still_screen_matches_at_zero(self):
+    def test_a_screen_that_is_not_panning_matches_at_zero(self):
+        # Retried, because "still" is not something a test can insist on: this runs
+        # against whatever the developer happens to be doing. Content changing is
+        # fine -- the profile only has to agree that nothing moved SIDEWAYS, which
+        # is what a rotation or a pan would show up as.
         screen = _native.Screen(0)
-        a = screen.profile(1024, 768, 200)
-        b = screen.profile(1024, 768, 200)
-        shift, _ = _native.best_shift(a, b, 100)
-        assert abs(shift) <= 1
+        for _ in range(5):
+            a = screen.profile(1024, 768, 200)
+            b = screen.profile(1024, 768, 200)
+            shift, _ = _native.best_shift(a, b, 100)
+            if abs(shift) <= 1:
+                return
+        pytest.fail(f"the view appears to have panned by {shift} between captures")

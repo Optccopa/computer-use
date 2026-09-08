@@ -88,10 +88,8 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "zoom stops validating its far corner",
         "src/cufast/session.py",
-        "        if not -1.0 <= x1 <= ref_w + 1.0:
-            raise self._out_of_frame",
-        "        if False:
-            raise self._out_of_frame",
+        "        if not -1.0 <= x1 <= ref_w + 1.0:",
+        "        if False:",
     ),
     (
         "the batch is no longer validated up front",
