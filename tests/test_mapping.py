@@ -7,18 +7,18 @@ the wrong thing, so these are the tests that matter most in the project.
 from __future__ import annotations
 
 import pytest
+from tests.conftest import FakeScreen
 
 from cufast import _native
 from cufast.config import Config
 from cufast.session import ActionError, Session
-from tests.conftest import FakeScreen
 
 
 def make_session(monkeypatch, screen, **cfg):
     import cufast.session as session_mod
 
     monkeypatch.setattr(_native, "Screen", lambda index: screen, raising=True)
-    defaults = dict(max_width=1024, max_height=768, settle_ms=0)
+    defaults = {"max_width": 1024, "max_height": 768, "settle_ms": 0}
     defaults.update(cfg)
     return session_mod.Session(Config(**defaults))
 
@@ -216,9 +216,10 @@ class TestZoomRegion:
         with pytest.raises(ActionError, match="finite"):
             session.zoom([0, 0, float("inf"), 100])
 
-    @pytest.mark.parametrize("region", [[0, 0, 10, 10], [500, 200, 900, 500], [1, 1, 1023, 575]])
+    @pytest.mark.parametrize(
+        "region", [[0, 0, 10, 10], [500, 200, 900, 500], [1, 1, 1023, 575]])
     def test_region_always_inside_the_display(self, session, fake_screen, region):
         session.zoom(region)
         call = fake_screen.calls[-1]
-        assert 0 <= call["rx"] and call["rx"] + call["rw"] <= 1920
-        assert 0 <= call["ry"] and call["ry"] + call["rh"] <= 1080
+        assert call["rx"] >= 0 and call["rx"] + call["rw"] <= 1920
+        assert call["ry"] >= 0 and call["ry"] + call["rh"] <= 1080

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from dataclasses import dataclass
 
 from cufast import _native
 from cufast.config import Config
-
 
 # How far to turn when measuring the view's response to the mouse. Big enough to
 # shift the image well clear of the noise, small enough not to fling the camera
@@ -338,10 +338,8 @@ class Session:
             # rotated by a probe the caller never asked for. On success the caller
             # subtracts `turned` from its own turn instead, so it is kept.
             if not committed and turned:
-                try:
+                with contextlib.suppress(Exception):
                     _native.mouse_move_relative(-turned, 0, 1)
-                except Exception:  # noqa: BLE001 - best effort; the real error wins
-                    pass
         raise ActionError(
             "could not work out how the mouse maps to the view: turning the camera "
             f"{turned} pixels did not move the image measurably. This happens when "
@@ -525,10 +523,10 @@ class Session:
         # Both corners floor through the same span arithmetic the downscaler uses, so
         # the captured rectangle is exactly the native area behind those pixels.
         native_w, native_h = self.screen.width, self.screen.height
-        lx0 = min(max(int(math.floor(x0)), 0), ref_w - 1) * native_w // ref_w
-        ly0 = min(max(int(math.floor(y0)), 0), ref_h - 1) * native_h // ref_h
-        lx1 = min(max(int(math.ceil(x1)), 1), ref_w) * native_w // ref_w
-        ly1 = min(max(int(math.ceil(y1)), 1), ref_h) * native_h // ref_h
+        lx0 = min(max(math.floor(x0), 0), ref_w - 1) * native_w // ref_w
+        ly0 = min(max(math.floor(y0), 0), ref_h - 1) * native_h // ref_h
+        lx1 = min(max(math.ceil(x1), 1), ref_w) * native_w // ref_w
+        ly1 = min(max(math.ceil(y1), 1), ref_h) * native_h // ref_h
 
         w = max(1, min(lx1, native_w) - lx0)
         h = max(1, min(ly1, native_h) - ly0)

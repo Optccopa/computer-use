@@ -9,4 +9,4 @@ from cufast import _native
 from cufast.config import Config
 from cufast.session import ActionError, Session
 
-__all__ = ["Config", "Session", "ActionError", "_native"]
+__all__ = ["ActionError", "Config", "Session", "_native"]

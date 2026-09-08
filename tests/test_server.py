@@ -8,12 +8,12 @@ import threading
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from tests.conftest import FakeScreen
 
 from cufast import _native
 from cufast.actions import ACTION_NAMES
 from cufast.config import Config
 from cufast.server import Harness, build_server
-from tests.conftest import FakeScreen
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ class TestToolSurface:
         server = build_server(Config(settle_ms=0))
         tool = next(t for t in run(server.list_tools()) if t.name == "computer")
         for name in ACTION_NAMES:
-            assert name in tool.description, f"{name} is not documented in the tool description"
+            assert name in tool.description, f"{name} is not in the tool description"
 
     def test_rejects_an_invalid_config(self, monkeypatch, fake_screen):
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
@@ -185,7 +185,8 @@ class TestComputerTool:
 
 
 class TestScreenInfo:
-    def test_reports_both_sizes_and_the_capture_path(self, monkeypatch, fake_screen, fake_input):
+    def test_reports_both_sizes_and_the_capture_path(self, monkeypatch, fake_screen,
+                                                     fake_input):
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
         server = build_server(Config(max_width=1024, max_height=768, settle_ms=0))
         text = run(server.call_tool("screen_info", {})).content[0].text

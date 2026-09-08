@@ -11,14 +11,14 @@ import ctypes
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from tests.conftest import FakeScreen
+from tests.test_server import run
 
 from cufast import _native
 from cufast.actions import STOPPED_MESSAGE, run_batch
 from cufast.config import Config
 from cufast.server import Harness, build_server
 from cufast.session import ActionError
-from tests.conftest import FakeScreen
-from tests.test_server import run
 
 # Captured at import, before the autouse fixture swaps them for stubs. The stubs are
 # what keeps a real system-wide hook out of the test process; these are the handful
@@ -44,6 +44,7 @@ def nothing_is_physically_held() -> bool:
     return not any(get_state(vk) & 0x8000 for vk in _MODIFIER_VKS)
 
 
+@pytest.mark.desktop
 class TestNativeHook:
     def test_lifecycle_is_idempotent(self):
         assert not NATIVE["kill_switch_running"]()

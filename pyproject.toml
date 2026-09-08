@@ -7,7 +7,18 @@ name = "cufast"
 version = "0.1.0"
 description = "Fast Windows computer-use agent harness (C++ core + MCP server)"
 requires-python = ">=3.14"
+license = "MIT"
 dependencies = ["mcp>=1.2"]
+
+# Declared, because they were not: pytest, ruff and anyio had been installed by hand
+# into the local venv and appeared nowhere in the project, so `uv sync --locked` on a
+# clean clone removed them and left no way to run the suite.
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "anyio>=4",
+    "ruff>=0.9",
+]
 
 [project.scripts]
 cufast-mcp = "cufast.server:main"
@@ -20,5 +31,31 @@ cmake.version = ">=3.26"
 cmake.build-type = "Release"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    # Touches the real display or installs a real system-wide keyboard hook. Runs
+    # locally; skipped on a CI runner, where duplication is unavailable and a
+    # headless session makes the result meaningless rather than merely different.
+    "desktop: needs a real Windows desktop session",
+]
 # "src" for the package under test, "." so tests can import tests.conftest helpers.
 pythonpath = ["src", "."]
+
+[tool.ruff]
+line-length = 95
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Chosen for the failure modes this project actually has: silent coordinate bugs and
+# swallowed errors. B (bugbear) catches the mutable-default and except-pass shapes,
+# RUF catches asyncio and dataclass mistakes.
+select = ["E", "F", "W", "I", "B", "UP", "RUF", "SIM", "C4"]
+ignore = [
+    # The native module is imported for its side effect of registering types.
+    "F401",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose, to pin behaviour the public surface
+# does not expose.
+"tests/*" = ["SLF001"]

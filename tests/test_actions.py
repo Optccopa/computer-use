@@ -39,7 +39,8 @@ class TestSingleActions:
         assert [e[1] for e in fake_input.events] == ["right", "middle"]
 
     def test_drag_maps_both_endpoints(self, session, fake_input):
-        execute(session, "left_click_drag", {"start_coordinate": [0, 0], "coordinate": [512, 288]})
+        execute(session, "left_click_drag",
+                {"start_coordinate": [0, 0], "coordinate": [512, 288]})
         assert fake_input.events == [("mouse_drag", 0, 0, 960, 540, "")]
 
     def test_scroll(self, session, fake_input):
@@ -205,7 +206,8 @@ class TestBatch:
     def test_out_of_range_click_fails_the_batch(self, session, fake_input):
         results = run_batch(
             session,
-            [{"action": "left_click", "coordinate": [1900, 100]}, {"action": "type", "text": "x"}],
+            [{"action": "left_click", "coordinate": [1900, 100]},
+             {"action": "type", "text": "x"}],
             auto_screenshot=False,
         )
         assert results[0].is_error
@@ -224,8 +226,8 @@ class TestBatch:
 
     def test_settle_delay_applies_between_mutating_actions(self, monkeypatch, fake_screen,
                                                            fake_input):
-        from cufast import _native
         import cufast.session as session_mod
+        from cufast import _native
 
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
         slow = session_mod.Session(Config(max_width=1024, max_height=768, settle_ms=30))
@@ -240,9 +242,10 @@ class TestBatch:
         # One delay between the two actions, one before the trailing screenshot.
         assert slept == [0.03, 0.03]
 
-    def test_no_settle_delay_after_a_read_only_action(self, monkeypatch, fake_screen, fake_input):
-        from cufast import _native
+    def test_no_settle_delay_after_a_read_only_action(self, monkeypatch, fake_screen,
+                                                      fake_input):
         import cufast.session as session_mod
+        from cufast import _native
 
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
         slow = session_mod.Session(Config(max_width=1024, max_height=768, settle_ms=30))

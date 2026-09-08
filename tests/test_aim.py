@@ -76,7 +76,7 @@ class TestAutoCalibration:
         # a wrong ratio into every later aim, so it must fail loudly instead.
         monkeypatch.setattr(fake_screen, "profile",
                             lambda max_w, max_h, timeout_ms=16: [128] * 1024)
-        with pytest.raises(ActionError, match="featureless|did not move"):
+        with pytest.raises(ActionError, match=r"featureless|did not move"):
             session.autocalibrate_aim()
         assert session.aim_ratio is None
 
@@ -226,7 +226,8 @@ class TestActions:
         result = execute(aimed, "aim", {"coordinate": [712, 288]})
         assert "+400" in result.text
 
-    @pytest.mark.parametrize("params", [{}, {"coordinate": [1, 2, 3]}, {"coordinate": "middle"}])
+    @pytest.mark.parametrize(
+        "params", [{}, {"coordinate": [1, 2, 3]}, {"coordinate": "middle"}])
     def test_aim_rejects_bad_arguments(self, params):
         with pytest.raises(ActionError):
             validate("aim", params)

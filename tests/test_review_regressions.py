@@ -112,8 +112,9 @@ class TestCursorReportsItsOwnPixel:
 
     def test_every_column_of_a_4k_display_lands_in_its_own_pixel(self, monkeypatch,
                                                                  fake_input):
-        import cufast.session as session_mod
         from tests.conftest import FakeScreen
+
+        import cufast.session as session_mod
 
         screen = FakeScreen(width=3840, height=2160)
         monkeypatch.setattr(_native, "Screen", lambda index: screen, raising=True)

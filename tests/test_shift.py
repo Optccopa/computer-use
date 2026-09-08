@@ -99,6 +99,7 @@ class TestDegenerateInput:
         assert abs(shift) <= 40
 
 
+@pytest.mark.desktop
 class TestLiveProfile:
     """The profile actually produced by a real capture of this machine."""
 

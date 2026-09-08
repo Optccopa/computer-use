@@ -89,6 +89,7 @@ class TestWaitForChange:
         assert execute(session, alias, {"duration": 1}).label == "wait_for_change"
 
 
+@pytest.mark.desktop
 class TestNativeWaitForChange:
     """Against the real display, which is where the blocking actually happens."""
 

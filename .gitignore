@@ -30,7 +30,9 @@ __pycache__/
 .mypy_cache/
 
 # uv
-uv.lock
+# uv.lock IS committed. The C++ half is pinned by CMake and the compiler flags, so
+# leaving the Python half to resolve fresh on every clone was the only thing making
+# a build unreproducible.
 
 # Editors / OS
 .vscode/

@@ -68,7 +68,7 @@ class FakeScreen:
         the aim_ratio a correct calibration should recover.
         """
         dst_w, _ = _native.plan_fit(self.width, self.height, max_w, max_h, False)
-        offset = int(round(self._panned / self.pan_ratio))
+        offset = round(self._panned / self.pan_ratio)
         # A repeating-but-not-periodic pattern, so a shift is unambiguous.
         return [((x + offset) * 37) % 251 + ((x + offset) * 7) % 13 for x in range(dst_w)]
 

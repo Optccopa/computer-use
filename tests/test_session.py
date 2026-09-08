@@ -7,18 +7,18 @@ it clicks the wrong thing.
 from __future__ import annotations
 
 import pytest
+from tests.conftest import FakeScreen
 
 from cufast.config import Config
 from cufast.session import ActionError, Session
-from tests.conftest import FakeScreen
 
 
 def make_session(monkeypatch, screen, **cfg_kwargs):
-    from cufast import _native
     import cufast.session as session_mod
+    from cufast import _native
 
     monkeypatch.setattr(_native, "Screen", lambda index: screen, raising=True)
-    defaults = dict(max_width=1024, max_height=768, settle_ms=0)
+    defaults = {"max_width": 1024, "max_height": 768, "settle_ms": 0}
     defaults.update(cfg_kwargs)
     return session_mod.Session(Config(**defaults))
 

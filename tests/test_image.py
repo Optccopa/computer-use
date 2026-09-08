@@ -47,9 +47,11 @@ class TestPlanFit:
         assert w == pytest.approx(432, abs=1)
 
     def test_rejects_empty(self):
-        with pytest.raises(Exception):
+        # RuntimeError specifically: nanobind maps the native Error to it, and a
+        # blind Exception would also pass if the call itself were misspelled.
+        with pytest.raises(RuntimeError):
             _native.plan_fit(0, 100, 1024, 768)
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError):
             _native.plan_fit(100, 100, 0, 768)
 
 
@@ -110,7 +112,7 @@ class TestDownscaleEquivalence:
         assert out == bytes([128, 128, 128])
 
     def test_rejects_short_buffer(self):
-        with pytest.raises(Exception):
+        with pytest.raises(RuntimeError):
             _native._downscale_raw(b"\x00" * 16, 100, 100, 10, 10, False)
 
 

@@ -435,12 +435,14 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
     if name == "key_down":
         _native.key_down(_text(params))
         held = _native.held_keys()
-        return ActionResult(name, text=f"OK (now held: {', '.join(held) if held else 'nothing'})")
+        listed = ", ".join(held) if held else "nothing"
+        return ActionResult(name, text=f"OK (now held: {listed})")
 
     if name == "key_up":
         _native.key_up(_text(params))
         held = _native.held_keys()
-        return ActionResult(name, text=f"OK (still held: {', '.join(held) if held else 'nothing'})")
+        listed = ", ".join(held) if held else "nothing"
+        return ActionResult(name, text=f"OK (still held: {listed})")
 
     if name == "left_mouse_down":
         _native.mouse_down("left")

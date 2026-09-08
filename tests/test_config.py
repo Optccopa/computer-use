@@ -82,7 +82,7 @@ class TestValidation:
             Config(max_height=4000)
 
     def test_rejects_bad_quality(self):
-        with pytest.raises(ValueError, match="0.01 and 1.0"):
+        with pytest.raises(ValueError, match=r"0\.01 and 1\.0"):
             Config(jpeg_quality=99.0)
         with pytest.raises(ValueError):
             Config(jpeg_quality=0.0)

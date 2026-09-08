@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Windows only, and not a portability oversight: the whole project is DXGI,
+    # WIC, SendInput and a WH_KEYBOARD_LL hook. CMakeLists fails the configure
+    # step on anything else deliberately.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Pin the interpreter
+        run: uv python install
+
+      - name: Build the extension and install
+        # Not --no-build-isolation: the point of CI is to prove a clean clone
+        # builds, and the lock file is what makes that reproducible.
+        run: uv sync --locked
+
+      - name: Check the lock file is current
+        # A pyproject change that was never locked would otherwise only surface on
+        # someone else's machine.
+        run: uv lock --check
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Test
+        # The desktop-marked tests need a real display session and a system-wide
+        # keyboard hook. A runner has neither in any meaningful sense, so they are
+        # run locally instead -- skipping them here beats asserting something that
+        # does not mean anything.
+        run: uv run pytest -q -m "not desktop"
