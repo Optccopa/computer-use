@@ -283,6 +283,20 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         "    if (injected) return false;",
         "    if (false) return false;",
     ),
+    (
+        # The state before the security review: keyed by chord text, so "esc" and
+        # "escape" were two entries for one key and no single release cleared both.
+        "the held-key registry goes back to matching on chord text",
+        "src/native/input.cpp",
+        "                           [&vks](const HeldEntry& e) { return e.second == vks; });",
+        "                           [&chord](const HeldEntry& e) { return e.first == chord; });",
+    ),
+    (
+        "releasing a key leaves its other spellings held",
+        "src/native/input.cpp",
+        "    held.erase(std::remove_if(held.begin(), held.end(), matches), held.end());",
+        "    held.erase(it);",
+    ),
 ]
 
 
