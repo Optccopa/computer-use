@@ -73,6 +73,26 @@ MAX_ACTIONS_PER_BATCH = 64
 MAX_TYPE_CHARS = 8000
 MAX_IMAGES_PER_BATCH = 10
 
+# The same cap applied across the whole batch, not just one action. The per-action
+# limit is justified by "typing occupies the harness for the whole time", but the
+# batch budget below only ever counted declared `duration`, so 64 actions of 8000
+# characters each was accepted: 512,000 keystrokes, 1,024,000 injected events, in one
+# call that no cap objected to. A cap that the batch multiplies by 64 is not a cap.
+MAX_TYPE_CHARS_PER_BATCH = MAX_TYPE_CHARS
+
+# What one step of a split relative move costs, matching the sleep in
+# mouse_move_relative. steps is capped at 1000 per action, so a single action can
+# occupy the harness for two seconds and a full batch for over two minutes -- none of
+# which the duration budget saw, because no `duration` was ever declared.
+_SECONDS_PER_RELATIVE_STEP = 0.002
+
+# Rough cost of injecting one character. type_text batches 512 events per SendInput,
+# so this is dominated by the receiving application rather than by us; it only has to
+# be the right order of magnitude to keep a batch from monopolising the one worker.
+_SECONDS_PER_TYPED_CHAR = 0.0005
+
+_STEPPED = frozenset({"mouse_move_rel", "aim", "look"})
+
 
 @dataclass
 class ActionResult:
@@ -550,20 +570,50 @@ def run_batch(
         except ActionError as exc:
             raise ActionError(f"action {index} ({name}): {exc}") from None
 
-    total_wait = sum(
-        float(raw.get("duration", 0) or 0)
-        for raw in actions
-        if canonical(raw.get("action")) in ("wait", "wait_for_change", "hold_key")
-    )
+    # Every way a batch can occupy the worker, not just the ways that announce
+    # themselves with a `duration`. Waits were the only thing counted, so a batch
+    # could hold the single worker for minutes through `steps` and `type` alone
+    # while passing a budget that believed it was instantaneous.
+    total_wait = 0.0
+    typed_chars = 0
+    for raw in actions:
+        name = canonical(raw.get("action"))
+        if name in ("wait", "wait_for_change", "hold_key"):
+            total_wait += float(raw.get("duration", 0) or 0)
+        elif name in _STEPPED:
+            steps = raw.get("steps", 1)
+            if isinstance(steps, int) and not isinstance(steps, bool):
+                total_wait += max(0, steps - 1) * _SECONDS_PER_RELATIVE_STEP
+        elif name == "type":
+            text = raw.get("text")
+            if isinstance(text, str):
+                typed_chars += len(text)
+                total_wait += len(text) * _SECONDS_PER_TYPED_CHAR
+
+    if typed_chars > MAX_TYPE_CHARS_PER_BATCH:
+        raise ActionError(
+            f"this batch types {typed_chars} characters in total, over the "
+            f"{MAX_TYPE_CHARS_PER_BATCH} limit for one call. The per-action limit is "
+            "the same number: it bounds the batch, not just each `type` in it, "
+            "because every character is a separate injected keystroke and the "
+            "harness runs one batch at a time. Split it, or use a file."
+        )
+
     if total_wait > MAX_BATCH_DURATION_SECONDS:
         raise ActionError(
-            f"this batch would spend {total_wait:g}s waiting, over the "
-            f"{MAX_BATCH_DURATION_SECONDS:g}s limit for one call. The harness runs one "
-            "batch at a time, so nothing else -- including screen_info -- can run "
-            "while it waits. Split it up."
+            f"this batch would occupy the harness for about {total_wait:g}s, over the "
+            f"{MAX_BATCH_DURATION_SECONDS:g}s limit for one call. Waits, split "
+            "relative moves (`steps`) and typing all count toward this. The harness "
+            "runs one batch at a time, so nothing else -- including screen_info -- "
+            "can run while it does. Split it up."
         )
 
     images = sum(1 for raw in actions if canonical(raw.get("action")) in _CAPTURING)
+    # The trailing automatic screenshot is an image the caller receives and pays for,
+    # so it belongs in the count. Leaving it out let ten explicit captures come back
+    # as eleven images, one over a cap whose whole purpose is bounding context cost.
+    if auto_screenshot and canonical(actions[-1].get("action")) not in _CAPTURING:
+        images += 1
     if images > MAX_IMAGES_PER_BATCH:
         raise ActionError(
             f"{images} captures in one call, over the {MAX_IMAGES_PER_BATCH} limit. "
@@ -578,6 +628,19 @@ def run_batch(
         name = canonical(raw["action"])
         if failed:
             results.append(ActionResult(name, text=NOT_EXECUTED, is_error=True))
+            continue
+
+        # Re-checked per action, not just once at the top. Most injecting actions
+        # consult the switch inside the native layer, but key_up and left_mouse_up
+        # deliberately do not -- releasing what is held must never be the thing that
+        # is blocked, or engaging the switch mid-drag strands the desktop. That
+        # bypass exists for the harness's own recovery path, and the model reaching
+        # it through an action is not the same thing: a batch of key_up actions ran
+        # to completion after the user pressed stop, and key_up takes any chord, not
+        # only one this process pressed.
+        if _native.input_blocked():
+            results.append(ActionResult(name, text=f"Error: {STOPPED_MESSAGE}", is_error=True))
+            failed = True
             continue
 
         params = {k: v for k, v in raw.items() if k != "action"}

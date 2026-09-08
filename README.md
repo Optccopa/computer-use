@@ -150,9 +150,29 @@ nine scale ratios in `tests/test_image.py`.
 than this process. If clicks silently do nothing against an elevated app, that is
 why; `SendInput` returning short is surfaced as an error rather than ignored.
 
+## Containment
+
+What the model may do here is deliberately broad: clicking destructive buttons,
+typing into terminals and reading whatever is on screen are all normal computer use,
+and none of it is gated. The boundaries are about the harness, not about the desktop:
+
+- **Kill switch.** A `WH_KEYBOARD_LL` hook on its own thread watches for Ctrl+Esc and
+  sets the `set_input_blocked` gate that every injection path checks. It ignores
+  injected keystrokes, so the agent cannot press its own stop button, and engaging it
+  releases whatever was held. Every batch is refused while it is engaged — screenshots
+  included — and it is re-checked between actions, because `key_up` and
+  `left_mouse_up` deliberately bypass the gate so recovery is never the thing blocked.
+- **Display.** Coordinates are bounds-checked against the controlled display, and
+  relative moves that would walk the cursor off it are undone and refused. `display`
+  selects a monitor per call; set `CUFAST_LOCK_DISPLAY=true` to make the configured
+  display a boundary rather than a default. `screen_info` describes another display
+  without switching to it.
+- **One call.** At most 64 actions, 10 returned images, 8000 typed characters, and
+  ~600s of estimated occupancy — waits, `steps` and typing all count, because the
+  harness runs one batch at a time and an unbounded batch is an unbounded outage.
+- **Screen content is untrusted.** The tool description says so explicitly: a
+  screenshot is data the model is looking at, not instructions it has received.
+
 ## Not yet built
 
-`wait_for_change` (the DXGI dirty rects are already tracked for it), a shell tool,
-UI Automation element lookup, clipboard access, and a kill-switch hotkey — the
-`set_input_blocked` gate every injection path already checks is in place, but nothing
-sets it yet.
+A shell tool, UI Automation element lookup, and clipboard access.

@@ -157,11 +157,11 @@ class TestBatchWallTimeIsBounded:
     """
 
     def test_a_batch_that_waits_too_long_is_refused(self, session):
-        with pytest.raises(ActionError, match="waiting"):
+        with pytest.raises(ActionError, match="occupy the harness"):
             run_batch(session, [{"action": "wait", "duration": 300}] * 3)
 
     def test_it_counts_holds_and_change_waits_too(self, session):
-        with pytest.raises(ActionError, match="waiting"):
+        with pytest.raises(ActionError, match="occupy the harness"):
             run_batch(session, [
                 {"action": "hold_key", "text": "w", "duration": 300},
                 {"action": "wait_for_change", "duration": 300},

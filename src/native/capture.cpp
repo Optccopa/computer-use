@@ -374,13 +374,21 @@ bool Capture::grab_dxgi(int timeout_ms) {
         D3D11_MAPPED_SUBRESOURCE mapped{};
         if (FAILED(context_->Map(staging_.get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
 
+        // Balances the Map even if the copy out throws. A staging texture left mapped
+        // fails every later Map, so one escaping exception would break capture for the
+        // life of the process rather than for one frame.
+        struct MapGuard {
+            ID3D11DeviceContext* ctx;
+            ID3D11Texture2D* tex;
+            ~MapGuard() { ctx->Unmap(tex, 0); }
+        } unmap{context_.get(), staging_.get()};
+
         // IDXGIOutput1::DuplicateOutput always yields a 32-bit BGRA surface, which
         // matches the DIB byte for byte. rotate_bgra is a straight row copy when
         // there is no turn to apply, so the common case pays nothing for this.
         rotate_bgra(static_cast<const uint8_t*>(mapped.pData),
                     static_cast<int>(mapped.RowPitch), panel_w, panel_h,
                     pixels_, stride_, dxgi_turns_);
-        context_->Unmap(staging_.get(), 0);
 
         // Deliberately not released here: the docs recommend holding until just
         // before the next acquire, because while the client does not own the frame

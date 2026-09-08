@@ -69,6 +69,13 @@ std::vector<std::pair<int, int>> relative_step_plan(int dx, int dy, int steps);
 void key_down(const std::string& chord);
 void key_up(const std::string& chord);
 std::vector<std::string> held_keys();
+
+// Runs the held-key bookkeeping over a scratch registry, injecting nothing, and
+// returns what is left held. Exists for the same reason hook_key_event_for_test
+// does: the real path calls SendInput, and a test run must never put keystrokes onto
+// the developer's desktop -- so the only way to cover this was not to cover it.
+std::vector<std::string> held_registry_for_test(const std::vector<std::string>& down,
+                                                const std::string& up);
 void get_cursor_pos(int* x, int* y);
 
 // Types literal text. Uses KEYEVENTF_UNICODE so layout never matters, batching the

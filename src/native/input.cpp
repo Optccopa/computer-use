@@ -355,6 +355,32 @@ std::vector<WORD> chord_vks(const std::string& chord) {
     return vks;
 }
 
+using HeldEntry = std::pair<std::string, std::vector<WORD>>;
+
+// Records a press. Matched on the RESOLVED keys, not on the chord text: the keymap
+// has aliases, so "esc" and "escape" -- or "ctrl" and "control" -- are one physical
+// key under two spellings. Keyed by text they became two registry entries, and
+// releasing either left the other listed as held forever, which matters because
+// held_keys() is what the model is told it is holding.
+void registry_press(std::vector<HeldEntry>& held, const std::string& chord,
+                    const std::vector<WORD>& vks) {
+    auto it = std::find_if(held.begin(), held.end(),
+                           [&vks](const HeldEntry& e) { return e.second == vks; });
+    if (it == held.end()) held.emplace_back(chord, vks);
+}
+
+// Removes every entry that resolves to the same keys and reports what to release, or
+// an empty vector when this process was not holding them.
+std::vector<WORD> registry_release(std::vector<HeldEntry>& held,
+                                   const std::vector<WORD>& resolved) {
+    auto matches = [&resolved](const HeldEntry& e) { return e.second == resolved; };
+    auto it = std::find_if(held.begin(), held.end(), matches);
+    if (it == held.end()) return {};
+    std::vector<WORD> vks = it->second;
+    held.erase(std::remove_if(held.begin(), held.end(), matches), held.end());
+    return vks;
+}
+
 void mouse_button_flags(MouseButton button, DWORD* down, DWORD* up) {
     switch (button) {
         case MouseButton::Left:   *down = MOUSEEVENTF_LEFTDOWN;   *up = MOUSEEVENTF_LEFTUP;   break;
@@ -737,9 +763,7 @@ void key_down(const std::string& chord) {
     // injects W-down into a desktop whose stop button has already fired, and nothing
     // is left that would ever release it.
     std::lock_guard<std::mutex> lock(g_held_mutex);
-    auto it = std::find_if(g_held.begin(), g_held.end(),
-                           [&chord](const auto& e) { return e.first == chord; });
-    if (it == g_held.end()) g_held.emplace_back(chord, vks);
+    registry_press(g_held, chord, vks);
 
     std::vector<INPUT> batch;
     for (WORD vk : vks) push_key(batch, vk, false);
@@ -754,13 +778,7 @@ void key_up(const std::string& chord) {
     const std::vector<WORD> resolved = chord_vks(chord);
 
     std::lock_guard<std::mutex> lock(g_held_mutex);
-    std::vector<WORD> vks;
-    auto it = std::find_if(g_held.begin(), g_held.end(),
-                           [&chord](const auto& e) { return e.first == chord; });
-    if (it != g_held.end()) {
-        vks = it->second;
-        g_held.erase(it);
-    }
+    std::vector<WORD> vks = registry_release(g_held, resolved);
     // Falling back to the resolved chord covers a release for something this process
     // did not press -- a key left down by a previous run, say.
     if (vks.empty()) vks = resolved;
@@ -768,6 +786,17 @@ void key_up(const std::string& chord) {
     std::vector<INPUT> batch;
     for (auto vk = vks.rbegin(); vk != vks.rend(); ++vk) push_key(batch, *vk, true);
     send_release(batch);
+}
+
+std::vector<std::string> held_registry_for_test(const std::vector<std::string>& down,
+                                                const std::string& up) {
+    std::vector<HeldEntry> held;
+    for (const auto& chord : down) registry_press(held, chord, chord_vks(chord));
+    if (!up.empty()) registry_release(held, chord_vks(up));
+    std::vector<std::string> out;
+    out.reserve(held.size());
+    for (const auto& entry : held) out.push_back(entry.first);
+    return out;
 }
 
 std::vector<std::string> held_keys() {

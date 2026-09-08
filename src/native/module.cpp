@@ -169,15 +169,20 @@ public:
         return hash_bgr(pixels_.data(), pixels_.size());
     }
 
-    int width() const { return capture_.monitor().width(); }
-    int height() const { return capture_.monitor().height(); }
-    int origin_x() const { return capture_.monitor().rect.left; }
-    int origin_y() const { return capture_.monitor().rect.top; }
-    int index() const { return capture_.monitor().index; }
-    bool using_dxgi() const { return capture_.using_dxgi(); }
+    // Locked like everything else that touches the capture. grab() mutates monitor_
+    // -- including its std::wstring -- from inside ensure_geometry when the display
+    // mode changes, so reading it unlocked is a data race. Unreachable today only
+    // because the Python side funnels every native call onto one worker thread,
+    // which is a property of the caller rather than of this class.
+    int width() const { std::lock_guard<std::mutex> lock(mutex_); return capture_.monitor().width(); }
+    int height() const { std::lock_guard<std::mutex> lock(mutex_); return capture_.monitor().height(); }
+    int origin_x() const { std::lock_guard<std::mutex> lock(mutex_); return capture_.monitor().rect.left; }
+    int origin_y() const { std::lock_guard<std::mutex> lock(mutex_); return capture_.monitor().rect.top; }
+    int index() const { std::lock_guard<std::mutex> lock(mutex_); return capture_.monitor().index; }
+    bool using_dxgi() const { std::lock_guard<std::mutex> lock(mutex_); return capture_.using_dxgi(); }
 
 private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     Capture capture_;
     std::vector<uint8_t> pixels_;
     ScaleScratch scratch_;
@@ -264,12 +269,18 @@ NB_MODULE(_native, m) {
                 return self.wait_for_change(timeout_seconds, grid_w, grid_h);
             },
             nb::arg("timeout_seconds"), nb::arg("grid_w") = 160, nb::arg("grid_h") = 90)
-        .def_prop_ro("width", &Screen::width)
-        .def_prop_ro("height", &Screen::height)
-        .def_prop_ro("origin_x", &Screen::origin_x)
-        .def_prop_ro("origin_y", &Screen::origin_y)
-        .def_prop_ro("index", &Screen::index)
-        .def_prop_ro("using_dxgi", &Screen::using_dxgi);
+        // The GIL is released around these for the same reason it is released around
+        // grab: they now take the capture's lock, and wait_for_change can hold that
+        // for its whole timeout. Blocking on it while holding the GIL would stall
+        // every other Python thread in the process for up to five minutes -- a worse
+        // failure than the unsynchronised read this locking replaced.
+        .def_prop_ro("width", [](Screen& s) { nb::gil_scoped_release r; return s.width(); })
+        .def_prop_ro("height", [](Screen& s) { nb::gil_scoped_release r; return s.height(); })
+        .def_prop_ro("origin_x", [](Screen& s) { nb::gil_scoped_release r; return s.origin_x(); })
+        .def_prop_ro("origin_y", [](Screen& s) { nb::gil_scoped_release r; return s.origin_y(); })
+        .def_prop_ro("index", [](Screen& s) { nb::gil_scoped_release r; return s.index(); })
+        .def_prop_ro("using_dxgi",
+                     [](Screen& s) { nb::gil_scoped_release r; return s.using_dxgi(); });
 
     // Exposed so the Python coordinate mapping uses the exact same fit the encoder
     // used, rather than a second copy of the rounding rules that could drift.
@@ -425,6 +436,7 @@ NB_MODULE(_native, m) {
         nb::arg("chord"));
 
     m.def("held_keys", &held_keys);
+    m.def("_held_registry", &held_registry_for_test, nb::arg("down"), nb::arg("up") = "");
     m.def("validate_chord", &validate_chord, nb::arg("chord"));
 
     m.def(

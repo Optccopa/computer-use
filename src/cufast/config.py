@@ -70,6 +70,13 @@ class Config:
     # application can act on.
     kill_switch: bool = True
 
+    # Makes display_index a boundary instead of a default. Off by default because
+    # driving several monitors is a documented feature of the tool; an operator who
+    # wants the agent confined to one display has no other way to say so, since the
+    # `display` parameter otherwise walks straight past the containment that
+    # confine_cursor enforces for the cursor.
+    lock_display: bool = False
+
     # How long a screenshot waits for the compositor to present a new frame. On a
     # timeout the previous frame is reused, which is correct: nothing changed.
     # One 60Hz frame is the useful ceiling.
@@ -94,6 +101,7 @@ class Config:
             jpeg_quality=_env_float("CUFAST_JPEG_QUALITY", 0.75),
             draw_cursor=_env_bool("CUFAST_DRAW_CURSOR", True),
             kill_switch=_env_bool("CUFAST_KILL_SWITCH", True),
+            lock_display=_env_bool("CUFAST_LOCK_DISPLAY", False),
             capture_timeout_ms=_env_int("CUFAST_CAPTURE_TIMEOUT_MS", 16),
             settle_ms=_env_int("CUFAST_SETTLE_MS", 40),
         )
