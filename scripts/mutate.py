@@ -15,7 +15,10 @@ is expected to FAIL for every one. A mutation that SURVIVES names a gap.
 from __future__ import annotations
 
 import argparse
+import atexit
+import contextlib
 import pathlib
+import signal
 import subprocess
 import sys
 import time
@@ -288,8 +291,8 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         # "escape" were two entries for one key and no single release cleared both.
         "the held-key registry goes back to matching on chord text",
         "src/native/input.cpp",
-        "                           [&vks](const HeldEntry& e) { return e.second == vks; });",
-        "                           [&chord](const HeldEntry& e) { return e.first == chord; });",
+        "[&vks](const HeldEntry& e) { return e.second == vks; });",
+        "[&chord](const HeldEntry& e) { return e.first == chord; });",
     ),
     (
         "releasing a key leaves its other spellings held",
@@ -316,6 +319,41 @@ def dirty_files() -> list[str]:
         if line[:2].strip() and not line.startswith("??"):
             out.append(line[3:])
     return out
+
+
+# The file currently holding a mutation, if any. A `finally` covers an exception but
+# not a kill, and this script has now been killed mid-mutation twice -- once by a
+# Ctrl-C and once by a `timeout` wrapper -- each time leaving a disabled check sitting
+# in the working tree looking exactly like real code. The second one disabled zoom's
+# far-corner validation. A cleanup that only runs on the paths you remembered is the
+# same class of bug as a test that only covers the cases you thought of.
+_IN_FLIGHT: tuple[str, str] | None = None
+
+
+def _emergency_restore() -> None:
+    global _IN_FLIGHT
+    if _IN_FLIGHT is None:
+        return
+    rel, original = _IN_FLIGHT
+    _IN_FLIGHT = None
+    print(f"\ninterrupted while {rel} was mutated -- putting it back")
+    restore(rel, original)
+
+
+def _install_cleanup() -> None:
+    atexit.register(_emergency_restore)
+    # SystemExit rather than an immediate restore: raising it here unwinds the normal
+    # way, so the atexit hook runs and nothing has to be duplicated. SIGBREAK is
+    # Windows' Ctrl-Break, which is otherwise unhandled.
+    def bail(signum, _frame):
+        sys.exit(128 + signum)
+
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            # Not the main thread, or unsupported on this platform.
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, bail)
 
 
 def restore(rel: str, original: str) -> None:
@@ -364,6 +402,7 @@ def rebuild() -> bool:
 
 
 def apply(mutations, native: bool, extra: list[str]) -> list[str]:
+    global _IN_FLIGHT
     survivors = []
     for i, (name, rel, old, new) in enumerate(mutations, 1):
         path = REPO / rel
@@ -373,6 +412,8 @@ def apply(mutations, native: bool, extra: list[str]) -> list[str]:
                   f"          (pattern not found in {rel} -- the code moved)")
             continue
 
+        # Recorded before the write, so a kill between the two still finds it.
+        _IN_FLIGHT = (rel, original)
         path.write_text(original.replace(old, new, 1), encoding="utf-8")
         try:
             if native and not rebuild():
@@ -388,6 +429,7 @@ def apply(mutations, native: bool, extra: list[str]) -> list[str]:
                 print(f"[{i:2}/{len(mutations)}] caught    {name}   ({took:.0f}s)")
         finally:
             restore(rel, original)
+            _IN_FLIGHT = None
             if native:
                 rebuild()
     return survivors
@@ -399,6 +441,8 @@ def main() -> int:
                         help="also mutate the C++ (rebuilds each time; slow)")
     parser.add_argument("--only", type=int, help="run a single mutation by index")
     args = parser.parse_args()
+
+    _install_cleanup()
 
     # Nothing starts until the tree is clean. This script rewrites tracked source
     # in place, so uncommitted work is work it can destroy -- and an interrupt at
