@@ -54,6 +54,16 @@ class Session:
         self.screen = _native.Screen(config.display_index)
         self._native_size = (0, 0)
         self._ref = (0, 0)
+        # Degrees of view rotation per screenshot pixel of mouse travel. Unknown
+        # until measured, because it depends on the game and on the user's
+        # sensitivity slider -- there is no default worth guessing.
+        self.look_scale: tuple[float, float] | None = None
+        # Native mouse pixels per screenshot pixel of on-screen displacement. This
+        # is what `aim` needs, and it is not the same constant as look_scale: one is
+        # about how far the view turns per unit of mouse travel, the other folds in
+        # the field of view as well, because it answers "how much mouse moves a thing
+        # I can see onto the crosshair".
+        self.aim_ratio: float | None = None
         self._refresh_reference()
 
     def _refresh_reference(self) -> tuple[int, int]:
@@ -169,6 +179,94 @@ class Session:
 
         return (scaled(dx, self.screen.width, ref_w),
                 scaled(dy, self.screen.height, ref_h))
+
+    def set_look_scale(self, yaw_dpp: float, pitch_dpp: float) -> None:
+        for name, value in (("yaw", yaw_dpp), ("pitch", pitch_dpp)):
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ActionError(f"{name} degrees-per-pixel must be a number")
+            if not math.isfinite(value) or value <= 0:
+                raise ActionError(f"{name} degrees-per-pixel must be positive and finite")
+            if value > 90:
+                raise ActionError(
+                    f"{name} degrees-per-pixel of {value} would sweep the whole view in "
+                    "one pixel; the value is probably pixels per degree, which is its "
+                    "reciprocal"
+                )
+        self.look_scale = (float(yaw_dpp), float(pitch_dpp))
+
+    def look_delta(self, yaw_deg: float, pitch_deg: float) -> tuple[int, int]:
+        """Degrees of view rotation -> native mouse delta.
+
+        This is what lets a model plan a sequence of turns without looking between
+        them. Working in pixels, it cannot predict where a turn ends up, so every
+        single turn costs a screenshot and a round trip to find out.
+        """
+        if self.look_scale is None:
+            raise ActionError(
+                "look needs a calibration first. Issue a known mouse_move_rel (say "
+                "dx=100), read how far the view actually turned off the game's own "
+                "readout (in Minecraft, F3 shows Yaw and Pitch), divide degrees by "
+                "pixels, and pass the result to set_look_scale."
+            )
+        for name, value in (("yaw", yaw_deg), ("pitch", pitch_deg)):
+            if not math.isfinite(value):
+                raise ActionError(f"{name} must be a finite number of degrees")
+
+        yaw_dpp, pitch_dpp = self.look_scale
+        ref_w, ref_h = self._refresh_reference()
+        # Straight to native pixels in one rounding step. Going via screenshot pixels
+        # would round twice, and the second rounding is applied to a number the first
+        # one already moved.
+        dx = (yaw_deg / yaw_dpp) * self.screen.width / ref_w
+        dy = (pitch_deg / pitch_dpp) * self.screen.height / ref_h
+
+        def to_int(value: float, degrees: float) -> int:
+            out = int(math.copysign(math.floor(abs(value) + 0.5), value))
+            if out == 0 and degrees != 0:
+                out = 1 if degrees > 0 else -1
+            return out
+
+        return to_int(dx, yaw_deg), to_int(dy, pitch_deg)
+
+    def set_aim_ratio(self, ratio: float) -> None:
+        if isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
+            raise ActionError("aim_ratio must be a number")
+        if not math.isfinite(ratio) or ratio <= 0:
+            raise ActionError("aim_ratio must be positive and finite")
+        self.aim_ratio = float(ratio)
+
+    def aim_delta(self, x: float, y: float) -> tuple[int, int]:
+        """Screenshot pixel -> native mouse delta that brings it to the crosshair.
+
+        A pointer-locked game aims wherever the centre of the view points, so
+        "click that" means "turn until that is in the middle, then click". Expressed
+        in the same coordinates as every other action, so the model does no
+        arithmetic and, more importantly, does not have to guess: guessing is what
+        produces a turn, an overshoot, and a correction where one call would do.
+
+        Only exactly linear near the centre -- a perspective projection is a tangent,
+        not a scale -- so a target at the very edge lands slightly short. A second
+        aim converges, and by then the target is near the centre where it is linear.
+        """
+        if self.aim_ratio is None:
+            raise ActionError(
+                "aim needs a calibration first. Pick something you can see off to one "
+                "side, note its x, issue a mouse_move_rel, then screenshot and see "
+                "where it moved to. aim_ratio is the native pixels moved divided by "
+                "how far it shifted on screen. Pass it to calibrate."
+            )
+        ref_w, ref_h = self._refresh_reference()
+        x = self._check_axis(x, ref_w, "x")
+        y = self._check_axis(y, ref_h, "y")
+
+        # The crosshair is the centre of the view, which is the centre of the image.
+        offset_x = x - ref_w / 2.0
+        offset_y = y - ref_h / 2.0
+
+        def to_int(value: float) -> int:
+            return int(math.copysign(math.floor(abs(value) + 0.5), value))
+
+        return to_int(offset_x * self.aim_ratio), to_int(offset_y * self.aim_ratio)
 
     def cursor_in_screenshot_space(self) -> tuple[int, int, bool]:
         """Cursor position in the frame the model reasons about.

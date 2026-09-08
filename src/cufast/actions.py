@@ -53,7 +53,7 @@ _MUTATING = frozenset(
     {
         "left_click", "right_click", "middle_click", "double_click", "triple_click",
         "left_click_drag", "left_mouse_down", "left_mouse_up", "mouse_move", "scroll",
-        "type", "key", "hold_key", "mouse_move_rel", "key_down", "key_up",
+        "type", "key", "hold_key", "mouse_move_rel", "key_down", "key_up", "aim", "look",
     }
 )
 
@@ -78,6 +78,9 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     "left_click_drag": frozenset({"start_coordinate", "coordinate", "text"}),
     "mouse_move": frozenset({"coordinate"}),
     "mouse_move_rel": frozenset({"dx", "dy", "steps"}),
+    "aim": frozenset({"coordinate", "steps"}),
+    "look": frozenset({"yaw", "pitch", "steps"}),
+    "calibrate": frozenset({"aim_ratio", "look_degrees_per_pixel"}),
     "left_mouse_down": frozenset(),
     "left_mouse_up": frozenset(),
     "cursor_position": frozenset(),
@@ -91,6 +94,27 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
 }
 
 ACTION_NAMES = tuple(sorted(_ALLOWED_PARAMS))
+
+# Spellings a model reaches for that are not the canonical name. Accepting them
+# costs nothing and saves a whole round trip each: in an observed session two of
+# fifty-three calls were spent purely on rediscovering the right spelling, and at
+# nine seconds a call that is not a rounding error.
+_ALIASES = {
+    "keydown": "key_down",
+    "keyup": "key_up",
+    "key_press": "key",
+    "press": "key",
+    "mouse_move_relative": "mouse_move_rel",
+    "move_rel": "mouse_move_rel",
+    "rel_move": "mouse_move_rel",
+    "screen_shot": "screenshot",
+    "capture": "screenshot",
+}
+
+
+def canonical(name: Any) -> Any:
+    """Maps a known misspelling onto the real action name."""
+    return _ALIASES.get(name, name) if isinstance(name, str) else name
 
 _SCROLL_DIRECTIONS = frozenset({"up", "down", "left", "right"})
 
@@ -145,6 +169,7 @@ def validate(name: Any, params: dict[str, Any]) -> None:
     """
     if not isinstance(name, str):
         raise ActionError("each action needs an 'action' field naming the action")
+    name = canonical(name)
     if name not in _ALLOWED_PARAMS:
         raise ActionError(f"unknown action {name!r}. Valid actions: {', '.join(ACTION_NAMES)}")
 
@@ -207,6 +232,37 @@ def validate(name: Any, params: dict[str, Any]) -> None:
         if not 1 <= steps <= 1000:
             raise ActionError("steps must be between 1 and 1000")
 
+    elif name == "aim":
+        if params.get("coordinate") is None:
+            raise ActionError("aim requires coordinate as [x, y]")
+        _coordinate(params["coordinate"], "coordinate")
+        steps = _integer(params.get("steps", 1), "steps")
+        if not 1 <= steps <= 1000:
+            raise ActionError("steps must be between 1 and 1000")
+
+    elif name == "look":
+        if params.get("yaw") is None and params.get("pitch") is None:
+            raise ActionError("look requires yaw and/or pitch, in degrees")
+        for field in ("yaw", "pitch"):
+            value = params.get(field, 0)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ActionError(f"{field} must be a number of degrees, got {value!r}")
+        steps = _integer(params.get("steps", 1), "steps")
+        if not 1 <= steps <= 1000:
+            raise ActionError("steps must be between 1 and 1000")
+
+    elif name == "calibrate":
+        if params.get("aim_ratio") is None and params.get("look_degrees_per_pixel") is None:
+            raise ActionError(
+                "calibrate requires aim_ratio and/or look_degrees_per_pixel"
+            )
+        for field in ("aim_ratio", "look_degrees_per_pixel"):
+            value = params.get(field)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ActionError(f"{field} must be a number, got {value!r}")
+
     elif name in ("key_down", "key_up"):
         _text(params)
 
@@ -234,6 +290,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
     half-apply -- moving the cursor and then rejecting its own arguments.
     """
     validate(name, params)
+    name = canonical(name)
 
     if name == "screenshot":
         return ActionResult(name, image=session.screenshot())
@@ -270,6 +327,36 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         dx, dy = session.scale_delta(float(params.get("dx", 0)), float(params.get("dy", 0)))
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
         return ActionResult(name, text=f"OK (moved {dx:+d}, {dy:+d} native pixels)")
+
+    if name == "aim":
+        x, y = _coordinate(params["coordinate"], "coordinate")
+        dx, dy = session.aim_delta(x, y)
+        _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+        return ActionResult(
+            name,
+            text=f"OK (turned {dx:+d}, {dy:+d} native pixels to bring ({x:g}, {y:g}) "
+            "onto the crosshair)",
+        )
+
+    if name == "look":
+        yaw = float(params.get("yaw", 0))
+        pitch = float(params.get("pitch", 0))
+        dx, dy = session.look_delta(yaw, pitch)
+        _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+        return ActionResult(name, text=f"OK (yaw {yaw:+g}, pitch {pitch:+g} degrees "
+                                       f"= {dx:+d}, {dy:+d} native pixels)")
+
+    if name == "calibrate":
+        if params.get("aim_ratio") is not None:
+            session.set_aim_ratio(float(params["aim_ratio"]))
+        if params.get("look_degrees_per_pixel") is not None:
+            dpp = float(params["look_degrees_per_pixel"])
+            session.set_look_scale(dpp, dpp)
+        aim = "unset" if session.aim_ratio is None else f"{session.aim_ratio:g}"
+        look = "unset" if session.look_scale is None else f"{session.look_scale[0]:g}"
+        return ActionResult(
+            name, text=f"OK (aim_ratio={aim}, look_degrees_per_pixel={look})"
+        )
 
     if name == "key_down":
         _native.key_down(_text(params))
@@ -360,7 +447,7 @@ def run_batch(
     for index, raw in enumerate(actions):
         if not isinstance(raw, dict):
             raise ActionError(f"action {index} must be an object, got {type(raw).__name__}")
-        name = raw.get("action")
+        name = canonical(raw.get("action"))
         if not isinstance(name, str):
             raise ActionError(f"action {index} is missing the required 'action' field")
         try:
@@ -372,7 +459,7 @@ def run_batch(
     failed = False
 
     for index, raw in enumerate(actions):
-        name = raw["action"]
+        name = canonical(raw["action"])
         if failed:
             results.append(ActionResult(name, text=NOT_EXECUTED, is_error=True))
             continue

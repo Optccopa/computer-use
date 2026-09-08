@@ -57,6 +57,17 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
   mouse_move_rel    -- {"dx": px, "dy": px, "steps": 1}. Move BY a delta rather than
                        to a position, in screenshot pixels. Positive dx is right,
                        positive dy is down. See POINTER-LOCKED APPS below.
+  aim               -- {"coordinate": [x, y]}. Turn the view so that whatever is at
+                       that screenshot pixel ends up on the crosshair. This is the
+                       one to use in a 3D game: say where the thing is, not how far
+                       to turn. Needs `calibrate` once first.
+  look              -- {"yaw": deg, "pitch": deg}. Turn by an angle, for turning to
+                       something you cannot currently see ("turn around" is yaw 180).
+                       Positive yaw is right, positive pitch is down. Needs
+                       `calibrate` once first.
+  calibrate         -- {"aim_ratio": n, "look_degrees_per_pixel": n}. Teaches this
+                       display how the mouse maps to the view. Persists for later
+                       calls. See CALIBRATING below.
   left_mouse_down / left_mouse_up -- {}. Act at the current cursor position.
   cursor_position   -- {}. Reports the cursor as "X=..., Y=..." in screenshot space.
   scroll            -- {"scroll_direction": "up"|"down"|"left"|"right",
@@ -85,12 +96,22 @@ symptoms of using the wrong action are specific and worth recognising:
     `mouse_move` turns it again by the same amount instead of doing nothing.
 Once you see either, switch to `mouse_move_rel` and stop reasoning about position.
 
-Calibrate before aiming. Turn by a known delta, read the resulting angle off an
-in-game readout (Minecraft: F3 shows Yaw and Pitch), and divide. You then have
-degrees per pixel and can hit a heading in one move rather than creeping up on it.
-Recalibrate if the game's sensitivity setting changes.
+CALIBRATING (do this once per game, in two calls, before doing anything else).
+  1. Pick something distinctive off to one side and note its x. Issue
+     {"action": "mouse_move_rel", "dx": 100} and screenshot.
+  2. See where it moved to. aim_ratio is the NATIVE pixels reported in the result
+     divided by how far the thing shifted on screen. If an in-game readout shows the
+     angle (Minecraft: F3 shows Yaw and Pitch), look_degrees_per_pixel is the degrees
+     turned divided by the 100 you asked for.
+  3. Pass them to `calibrate`. From then on use `aim` and `look` and never do this
+     arithmetic again. Recalibrate if the game's sensitivity or FOV setting changes.
 
-To move and look at once: `key_down` w, then `mouse_move_rel` in later actions or
+`aim` is near-exact for anything within the middle of the view and lands slightly
+short for something at the very edge, because a perspective view is a tangent rather
+than a scale. If you miss, aim again -- by then it is near the centre, where it is
+exact. Do not go back to guessing pixel deltas.
+
+To move and look at once: `key_down` w, then `aim` or `look` in later actions or
 calls, then `key_up` w. Do not use `hold_key` for this -- it blocks until it ends.
 Every key you press with key_down stays down until you release it; the result of
 each action tells you what is currently held.
@@ -99,6 +120,26 @@ each action tells you what is currently held.
 at 1 for a game that accumulates deltas per frame, which is most of them. Raise it if
 a large turn comes out smaller than the calibration predicts, which means the game
 is clamping how far the view can move in a single frame.
+
+WORKING FAST. Measured on a real session: the actions take about 0.03 s per call and
+the round trip that delivered them takes about 9 s. Nothing you can do to the actions
+matters; the only thing that matters is making fewer calls. So:
+  - Put the whole plan in one call. "Aim at the tree, hold left mouse, wait 3s,
+    release, screenshot" is one call, not five.
+  - Do not take a screenshot to confirm something you can already predict. Screenshot
+    when you genuinely do not know what happened.
+  - Pass auto_screenshot=false on a call whose result you do not need to see.
+  - Never issue a turn, look, correct, look again. That is three round trips for one
+    decision, and it is what `aim` exists to prevent.
+
+A good game batch looks like this -- one call, six actions:
+  [{"action": "aim", "coordinate": [430, 250]},
+   {"action": "left_mouse_down"},
+   {"action": "wait", "duration": 3},
+   {"action": "left_mouse_up"},
+   {"action": "key_down", "text": "w"},
+   {"action": "wait", "duration": 1.5},
+   {"action": "key_up", "text": "w"}]
 
 Dropdowns and scrollbars are often easier to drive with keyboard shortcuts than with
 the mouse. If an action does not appear to have worked, take a screenshot and check
