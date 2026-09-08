@@ -37,7 +37,11 @@ std::vector<MonitorInfo> enumerate_monitors();
 // can be composited with DrawIconEx regardless of which path produced the frame.
 class Capture {
 public:
-    explicit Capture(int monitor_index);
+    // allow_dxgi=false pins this capture to the GDI path. GDI reports the composed,
+    // already-oriented desktop and needs no rotation, which makes it the reference a
+    // duplication frame can be checked against -- the only way to catch a rotation
+    // that is wrong by a whole quarter turn, since both look like a plausible image.
+    explicit Capture(int monitor_index, bool allow_dxgi = true);
     ~Capture();
 
     Capture(const Capture&) = delete;
@@ -98,6 +102,7 @@ private:
 
     // DXGI duplication state.
     bool dxgi_ready_ = false;
+    bool allow_dxgi_ = true;
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGIOutputDuplication> dupl_;

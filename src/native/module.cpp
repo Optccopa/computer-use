@@ -33,7 +33,7 @@ struct Shot {
 // screenshots performs no allocation after the first.
 class Screen {
 public:
-    explicit Screen(int display_index) : capture_(display_index) {}
+    Screen(int display_index, bool prefer_dxgi) : capture_(display_index, prefer_dxgi) {}
 
     Shot grab(int max_w, int max_h, float quality, bool draw_cursor, int timeout_ms,
               int rx, int ry, int rw, int rh, bool png, bool allow_upscale) {
@@ -222,7 +222,8 @@ NB_MODULE(_native, m) {
         .def_ro("dxgi", &Shot::dxgi);
 
     nb::class_<Screen>(m, "Screen")
-        .def(nb::init<int>(), nb::arg("display_index") = 0)
+        .def(nb::init<int, bool>(), nb::arg("display_index") = 0,
+             nb::arg("prefer_dxgi") = true)
         .def(
             "grab",
             [](Screen& self, int max_w, int max_h, float quality, bool draw_cursor, int timeout_ms,

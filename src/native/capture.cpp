@@ -74,7 +74,7 @@ std::vector<MonitorInfo> enumerate_monitors() {
     return monitors;
 }
 
-Capture::Capture(int monitor_index) {
+Capture::Capture(int monitor_index, bool allow_dxgi) : allow_dxgi_(allow_dxgi) {
     auto monitors = enumerate_monitors();
     if (monitor_index < 0 || monitor_index >= static_cast<int>(monitors.size())) {
         char buf[128];
@@ -188,6 +188,7 @@ void Capture::ensure_geometry(bool force) {
 }
 
 bool Capture::init_dxgi() {
+    if (!allow_dxgi_) return false;
     teardown_dxgi();
     ComPtr<IDXGIFactory1> factory;
     if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(factory.put())))) return false;
@@ -210,10 +211,16 @@ bool Capture::init_dxgi() {
                 // desktop image, so undoing it is the turn in the other direction:
                 // ROTATE90 means the desktop was rotated 90 degrees clockwise onto
                 // the panel, and three more clockwise turns put it back.
+                // Determined by experiment, not from the documentation, because
+                // reasoning about which direction DXGI_MODE_ROTATION describes got
+                // it exactly 180 degrees wrong: ROTATE90 and ROTATE270 were swapped.
+                // The first frame after DuplicateOutput seeds from GDI, so a
+                // one-shot capture looked correct while every later frame was
+                // upside down -- see the DXGI-vs-GDI orientation test.
                 switch (desc.Rotation) {
-                    case DXGI_MODE_ROTATION_ROTATE90:  turns = 3; break;
+                    case DXGI_MODE_ROTATION_ROTATE90:  turns = 1; break;
                     case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
-                    case DXGI_MODE_ROTATION_ROTATE270: turns = 1; break;
+                    case DXGI_MODE_ROTATION_ROTATE270: turns = 3; break;
                     default:                           turns = 0; break;
                 }
                 found_adapter = adapter;
