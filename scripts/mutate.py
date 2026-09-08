@@ -191,16 +191,14 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         # reach the code under test looks exactly like a missing test.
         "quarter turns are swapped (the bug that shipped)",
         "src/native/capture.cpp",
-        "case DXGI_MODE_ROTATION_ROTATE90:  turns = 1; break;
-"
-        "                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
-"
-        "                    case DXGI_MODE_ROTATION_ROTATE270: turns = 3; break;",
-        "case DXGI_MODE_ROTATION_ROTATE90:  turns = 3; break;
-"
-        "                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
-"
-        "                    case DXGI_MODE_ROTATION_ROTATE270: turns = 1; break;",
+        "ROTATE90:  turns = 1; break;",
+        "ROTATE90:  turns = 3; break;",
+    ),
+    (
+        "the other quarter turn, so a ROTATE270 panel is reached too",
+        "src/native/capture.cpp",
+        "ROTATE270: turns = 3; break;",
+        "ROTATE270: turns = 1; break;",
     ),
     (
         "relative movement becomes absolute again",
