@@ -272,7 +272,7 @@ def restore(rel: str, original: str) -> None:
         print(f"          (restored {rel} through git)")
 
 
-def run_suite(extra: list[str]) -> bool:
+def run_suite(extra: list[str], report: bool = False) -> bool:
     """True when the suite passes. A timeout counts as a failure, i.e. caught."""
     try:
         proc = subprocess.run(
@@ -280,7 +280,14 @@ def run_suite(extra: list[str]) -> bool:
             cwd=REPO, capture_output=True, text=True, timeout=SUITE_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
+        if report:
+            print(f"  (timed out after {SUITE_TIMEOUT_SECONDS}s)")
         return False
+    if report and proc.returncode != 0:
+        # Saying only "the suite is failing" leaves the next person running it by
+        # hand to find out what. It is usually a live-desktop test that lost a race.
+        print("
+".join(proc.stdout.strip().splitlines()[-15:]))
     return proc.returncode == 0
 
 
@@ -341,8 +348,11 @@ def main() -> int:
             print(f"  {name}")
         return 2
 
-    if not run_suite([]):
-        print("The suite is already failing. Fix that before mutating anything.")
+    # Retried once. The gate runs the live-desktop tests too, and those race against
+    # whatever the machine is actually doing -- a single loss is not a broken suite.
+    if not run_suite([], report=False) and not run_suite([], report=True):
+        print("
+The suite is already failing. Fix that before mutating anything.")
         return 2
 
     mutations = NATIVE_MUTATIONS if args.native else PYTHON_MUTATIONS
