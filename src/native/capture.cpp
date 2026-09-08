@@ -1,9 +1,9 @@
-#include "capture.h"
+#include "capture.hpp"
 
 #include <algorithm>
 #include <cstring>
 
-#include "image.h"
+#include "image.hpp"
 
 namespace cufast {
 namespace {

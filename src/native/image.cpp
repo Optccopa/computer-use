@@ -1,4 +1,4 @@
-#include "image.h"
+#include "image.hpp"
 
 #include <immintrin.h>
 #include <intrin.h>

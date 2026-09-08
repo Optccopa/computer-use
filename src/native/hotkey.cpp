@@ -1,4 +1,4 @@
-#include "hotkey.h"
+#include "hotkey.hpp"
 
 #include <atomic>
 #include <future>
@@ -6,7 +6,7 @@
 #include <string>
 #include <thread>
 
-#include "input.h"
+#include "input.hpp"
 
 namespace cufast {
 namespace {
