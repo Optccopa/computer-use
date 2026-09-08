@@ -64,6 +64,12 @@ class Config:
     jpeg_quality: float = 0.75
     draw_cursor: bool = True
 
+    # Installs the Ctrl+Esc kill switch. While it runs, Ctrl+Esc no longer opens the
+    # Start menu: the low-level hook sees the chord first and swallows it, which is
+    # the point -- the stop button must not also be a shortcut the focused
+    # application can act on.
+    kill_switch: bool = True
+
     # How long a screenshot waits for the compositor to present a new frame. On a
     # timeout the previous frame is reused, which is correct: nothing changed.
     # One 60Hz frame is the useful ceiling.
@@ -87,6 +93,7 @@ class Config:
             max_height=_env_int("CUFAST_MAX_HEIGHT", DEFAULT_MAX_HEIGHT),
             jpeg_quality=_env_float("CUFAST_JPEG_QUALITY", 0.75),
             draw_cursor=_env_bool("CUFAST_DRAW_CURSOR", True),
+            kill_switch=_env_bool("CUFAST_KILL_SWITCH", True),
             capture_timeout_ms=_env_int("CUFAST_CAPTURE_TIMEOUT_MS", 16),
             settle_ms=_env_int("CUFAST_SETTLE_MS", 40),
         )

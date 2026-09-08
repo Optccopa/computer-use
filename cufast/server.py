@@ -87,6 +87,12 @@ class Harness:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cufast")
         self._sessions: dict[int, Session] = {}
         self._current = config.display_index
+        # Started here rather than lazily on first use: the stop button has to exist
+        # before the first action can run, not after it. A failure to install is
+        # fatal on purpose -- running an input-injecting server with no way to stop
+        # it is worse than not starting.
+        if config.kill_switch:
+            _native.start_kill_switch()
 
     async def _call(self, fn, *args):
         loop = asyncio.get_running_loop()
@@ -128,6 +134,14 @@ class Harness:
                     f"at ({entry['x']},{entry['y']}){marker}{active}"
                 )
             lines.append("")
+            if _native.input_blocked():
+                lines.append("KILL SWITCH ENGAGED -- input is blocked until the user "
+                             "presses Ctrl+Esc again. Do not attempt to act.")
+            elif _native.kill_switch_running():
+                lines.append("Kill switch armed: the user can press Ctrl+Esc to stop you.")
+            else:
+                lines.append("Kill switch is NOT running; the user has no stop button.")
+            lines.append("")
             lines.append(
                 "Pass `display` to the computer tool to control a different one. "
                 "The index here is zero-based, so Windows DISPLAY2 is index 1."
@@ -144,6 +158,7 @@ class Harness:
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False)
+        _native.stop_kill_switch()
 
 
 def build_server(config: Config | None = None) -> MCPServer:

@@ -111,6 +111,26 @@ class RecordingInput:
         return [event[0] for event in self.events]
 
 
+@pytest.fixture(autouse=True)
+def no_real_kill_switch(monkeypatch):
+    """Keeps the low-level keyboard hook out of the test process.
+
+    Autouse rather than opt-in: build_server() arms the kill switch by default, so
+    without this every test that builds a server would install a real system-wide
+    hook and silently break Ctrl+Esc for whoever is running the suite.
+    """
+    state = {"running": False, "blocked": False}
+    monkeypatch.setattr(_native, "start_kill_switch",
+                        lambda: state.__setitem__("running", True), raising=True)
+    monkeypatch.setattr(_native, "stop_kill_switch",
+                        lambda: state.__setitem__("running", False), raising=True)
+    monkeypatch.setattr(_native, "kill_switch_running", lambda: state["running"], raising=True)
+    monkeypatch.setattr(_native, "input_blocked", lambda: state["blocked"], raising=True)
+    monkeypatch.setattr(_native, "set_input_blocked",
+                        lambda blocked: state.__setitem__("blocked", blocked), raising=True)
+    return state
+
+
 @pytest.fixture
 def config():
     # settle_ms=0 keeps tests from sleeping; the delay has its own dedicated test.

@@ -18,6 +18,15 @@ from cufast.session import ActionError, Screenshot, Session
 # earlier action in the same turn failed.
 NOT_EXECUTED = "Not executed: an earlier computer action in this turn failed."
 
+# What the model is told when the user has hit the stop button. Worded as an
+# instruction rather than a status because a bare "input is blocked" reads to a
+# model like a transient fault, and the response to a transient fault is to retry.
+STOPPED_MESSAGE = (
+    "STOPPED BY THE USER. They pressed the kill switch (Ctrl+Esc), which blocks all "
+    "mouse and keyboard input. Stop what you were doing, do not retry, and tell them "
+    "you have stopped. They release it by pressing Ctrl+Esc again."
+)
+
 MAX_DURATION_SECONDS = 300.0
 MAX_SCROLL_AMOUNT = 1000
 
@@ -306,6 +315,12 @@ def run_batch(
     """
     if not actions:
         raise ActionError("actions must contain at least one action")
+
+    # Checked for the whole call, not just the injecting actions. A batch of pure
+    # screenshots would otherwise succeed while the switch is engaged, and the model
+    # would carry on looking around instead of stopping.
+    if _native.input_blocked():
+        raise ActionError(STOPPED_MESSAGE)
 
     # Validate everything up front. Doing it inside the loop would let a malformed
     # action at index 1 execute index 0 first and then raise, applying half the batch

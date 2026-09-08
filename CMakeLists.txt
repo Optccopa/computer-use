@@ -19,6 +19,7 @@ nanobind_add_module(_native NB_STATIC NOMINSIZE LTO
   src/cufast_native/capture.cpp
   src/cufast_native/image.cpp
   src/cufast_native/input.cpp
+  src/cufast_native/hotkey.cpp
 )
 
 target_compile_definitions(_native PRIVATE

@@ -22,6 +22,11 @@ bool dpi_per_monitor_aware();
 void set_input_blocked(bool blocked);
 bool input_blocked();
 
+// Releases every mouse button and modifier key that is currently down, bypassing
+// the kill switch. Called when the stop button is pressed: whatever the agent was
+// mid-way through, the desktop it hands back has to be usable. Never throws.
+void release_held_input() noexcept;
+
 enum class MouseButton { Left, Right, Middle };
 
 // All coordinates are absolute virtual-desktop pixels and may be negative when a

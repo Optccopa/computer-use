@@ -14,7 +14,10 @@ std::atomic<bool> g_blocked{false};
 
 void check_allowed() {
     if (g_blocked.load(std::memory_order_relaxed)) {
-        throw Error("input is blocked: the kill switch is engaged");
+        throw Error("STOPPED BY THE USER. They pressed the kill switch (Ctrl+Esc), which "
+                    "blocks all mouse and keyboard input. Stop what you were doing, do not "
+                    "retry, and tell them you have stopped. They release it by pressing "
+                    "Ctrl+Esc again.");
     }
 }
 
@@ -335,6 +338,40 @@ bool dpi_per_monitor_aware() {
 
 void set_input_blocked(bool blocked) { g_blocked.store(blocked, std::memory_order_relaxed); }
 bool input_blocked() { return g_blocked.load(std::memory_order_relaxed); }
+
+void release_held_input() noexcept {
+    // Left and right control (etc.) rather than the generic VK_CONTROL: a generic
+    // up does not clear a specifically-held right modifier, and the modifier that
+    // stays latched is the one that makes every later keystroke a shortcut.
+    static constexpr struct {
+        int vk;
+        WORD release;
+    } kKeys[] = {
+        {VK_LCONTROL, VK_LCONTROL}, {VK_RCONTROL, VK_RCONTROL},
+        {VK_LSHIFT, VK_LSHIFT},     {VK_RSHIFT, VK_RSHIFT},
+        {VK_LMENU, VK_LMENU},       {VK_RMENU, VK_RMENU},
+        {VK_LWIN, VK_LWIN},         {VK_RWIN, VK_RWIN},
+    };
+    static constexpr struct {
+        int vk;
+        DWORD up;
+    } kButtons[] = {
+        {VK_LBUTTON, MOUSEEVENTF_LEFTUP},
+        {VK_RBUTTON, MOUSEEVENTF_RIGHTUP},
+        {VK_MBUTTON, MOUSEEVENTF_MIDDLEUP},
+    };
+
+    std::vector<INPUT> batch;
+    // Buttons first: a drag that ends with the modifier already gone is a plain
+    // drag, whereas releasing the modifier last can turn it into a shift-drag.
+    for (const auto& b : kButtons) {
+        if (GetAsyncKeyState(b.vk) & 0x8000) push_mouse(batch, b.up);
+    }
+    for (const auto& k : kKeys) {
+        if (GetAsyncKeyState(k.vk) & 0x8000) push_key(batch, k.release, true);
+    }
+    send_release(batch);
+}
 
 void get_cursor_pos(int* x, int* y) {
     POINT p{};
