@@ -193,6 +193,16 @@ class TestZoomRegion:
         with pytest.raises(ActionError):
             session.zoom([0, 0, 99999, 99999])
 
+    def test_each_far_axis_is_checked_on_its_own(self, session):
+        # Both of the cases above are out of range on BOTH axes, so either check
+        # alone satisfies them -- deleting the x1 check left the suite green because
+        # y1 caught it anyway. Mutation testing is what surfaced that. One axis at a
+        # time is the only way to hold both checks.
+        with pytest.raises(ActionError, match="x1"):
+            session.zoom([100, 50, 1900, 500])   # x1 past 1024, y1 legal
+        with pytest.raises(ActionError, match="y1"):
+            session.zoom([100, 50, 500, 1000])   # x1 legal, y1 past 576
+
     def test_accepts_the_exclusive_far_edge(self, session, fake_screen):
         session.zoom([0, 0, session.ref_width, session.ref_height])
         call = fake_screen.calls[-1]
