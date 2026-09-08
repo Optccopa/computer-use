@@ -11,8 +11,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Python 3.14 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 
-nanobind_add_module(_native NB_STATIC
+# NOMINSIZE is load-bearing: nanobind defaults to /Os (FavorSizeOrSpeed=Size) to
+# keep binding glue small, which also suppresses auto-vectorization and unrolling
+# in the downscale kernel -- the hottest loop in the project.
+nanobind_add_module(_native NB_STATIC NOMINSIZE LTO
   src/cufast_native/module.cpp
+  src/cufast_native/capture.cpp
+  src/cufast_native/image.cpp
+  src/cufast_native/input.cpp
 )
 
 target_compile_definitions(_native PRIVATE
@@ -20,6 +26,9 @@ target_compile_definitions(_native PRIVATE
   WIN32_LEAN_AND_MEAN
   UNICODE
   _UNICODE
+  # SetProcessDpiAwarenessContext and PER_MONITOR_AWARE_V2 need the Win10 SDK surface.
+  _WIN32_WINNT=0x0A00
+  WINVER=0x0A00
 )
 
 # /arch:AVX2 for the downscale kernel; /O2 comes from Release.

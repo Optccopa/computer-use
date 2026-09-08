@@ -188,9 +188,13 @@ bool Capture::grab_dxgi(int timeout_ms) {
 
         holding_frame_ = true;
 
-        // LastPresentTime == 0 means only the pointer moved, so the desktop image is
-        // unchanged -- except on the very first grab, where we have nothing cached.
-        if (info.LastPresentTime.QuadPart == 0 && have_frame_) {
+        // LastPresentTime == 0 means the compositor has presented nothing since
+        // duplication started, so the desktop image is unchanged and the texture is
+        // not guaranteed to hold anything. Usually that is just a pointer move. On
+        // the very first acquire it means the surface is still blank, which is why
+        // this must not special-case the uncached path: grab() seeds from GDI
+        // instead, rather than handing back a black screenshot.
+        if (info.LastPresentTime.QuadPart == 0) {
             dupl_->ReleaseFrame();
             holding_frame_ = false;
             return false;
