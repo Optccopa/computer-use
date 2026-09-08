@@ -8,6 +8,7 @@ Run directly, or wire into Claude Code with:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import base64
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -314,6 +315,11 @@ def build_server(config: Config | None = None) -> MCPServer:
         except (ActionError, RuntimeError, ValueError) as exc:
             raise ToolError(str(exc)) from None
 
+    # Exposed so main() can shut the harness down on the way out. Deliberately not
+    # an atexit hook registered here: build_server is what the tests call, and an
+    # atexit hook would have the real native release run at the end of a test
+    # session, which is the one thing the suite must never do.
+    server.cufast_harness = harness
     return server
 
 
@@ -323,7 +329,16 @@ def main() -> None:
     except ValueError as exc:
         print(f"cufast: bad configuration: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
-    server.run()
+
+    # A stdio server exits when its client closes the pipe, which for a game is
+    # whenever the session ends -- possibly with W still held from a key_down. The
+    # OS does not know that key belonged to this process, so without this it stays
+    # down and the user walks into a wall.
+    atexit.register(server.cufast_harness.shutdown)
+    try:
+        server.run()
+    finally:
+        server.cufast_harness.shutdown()
 
 
 if __name__ == "__main__":

@@ -141,7 +141,7 @@ def no_real_kill_switch(monkeypatch):
     without this every test that builds a server would install a real system-wide
     hook and silently break Ctrl+Esc for whoever is running the suite.
     """
-    state = {"running": False, "blocked": False}
+    state = {"running": False, "blocked": False, "releases": 0}
     monkeypatch.setattr(_native, "start_kill_switch",
                         lambda: state.__setitem__("running", True), raising=True)
     monkeypatch.setattr(_native, "stop_kill_switch",
@@ -150,6 +150,11 @@ def no_real_kill_switch(monkeypatch):
     monkeypatch.setattr(_native, "input_blocked", lambda: state["blocked"], raising=True)
     monkeypatch.setattr(_native, "set_input_blocked",
                         lambda blocked: state.__setitem__("blocked", blocked), raising=True)
+    # Stubbed for the same reason as the rest: the real one calls SendInput, and a
+    # test run must never inject anything onto the developer's desktop.
+    monkeypatch.setattr(_native, "release_held_input",
+                        lambda: state.__setitem__("releases", state["releases"] + 1),
+                        raising=True)
     return state
 
 

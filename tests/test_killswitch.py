@@ -122,6 +122,33 @@ class TestServerWiring:
         harness.shutdown()
         assert not no_real_kill_switch["running"]
 
+    def test_shutdown_releases_whatever_is_held(self, no_real_kill_switch, fake_screen,
+                                                monkeypatch, fake_input):
+        # A stdio server exits when its client closes the pipe, which for a game
+        # session can be mid-action with a movement key still down.
+        monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
+        harness = Harness(Config(settle_ms=0))
+        harness.shutdown()
+        assert no_real_kill_switch["releases"] == 1
+
+    def test_shutdown_is_idempotent(self, no_real_kill_switch, fake_screen, monkeypatch,
+                                    fake_input):
+        # main() calls it in a finally AND registers it with atexit, so it runs twice
+        # on a normal exit.
+        monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
+        harness = Harness(Config(settle_ms=0))
+        harness.shutdown()
+        harness.shutdown()
+        assert not no_real_kill_switch["running"]
+
+    def test_the_server_exposes_its_harness_for_shutdown(self, no_real_kill_switch,
+                                                        fake_screen, monkeypatch,
+                                                        fake_input):
+        monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
+        server = build_server(Config(settle_ms=0))
+        server.cufast_harness.shutdown()
+        assert no_real_kill_switch["releases"] == 1
+
     def test_it_can_be_turned_off(self, no_real_kill_switch, fake_screen, monkeypatch,
                                   fake_input):
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
