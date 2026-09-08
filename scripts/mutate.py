@@ -185,10 +185,22 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
+        # Both branches, because that is what the bug was -- and because mutating
+        # only ROTATE90 changes nothing on a panel that reports ROTATE270, which is
+        # what the developer's portrait monitor reports. A mutation that does not
+        # reach the code under test looks exactly like a missing test.
         "quarter turns are swapped (the bug that shipped)",
         "src/native/capture.cpp",
-        "case DXGI_MODE_ROTATION_ROTATE90:  turns = 1; break;",
-        "case DXGI_MODE_ROTATION_ROTATE90:  turns = 3; break;",
+        "case DXGI_MODE_ROTATION_ROTATE90:  turns = 1; break;
+"
+        "                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
+"
+        "                    case DXGI_MODE_ROTATION_ROTATE270: turns = 3; break;",
+        "case DXGI_MODE_ROTATION_ROTATE90:  turns = 3; break;
+"
+        "                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
+"
+        "                    case DXGI_MODE_ROTATION_ROTATE270: turns = 1; break;",
     ),
     (
         "relative movement becomes absolute again",
