@@ -33,7 +33,8 @@ def main():
 
     screen = _native.Screen(0)
     print(
-        f"\nScreen 0: {screen.width}x{screen.height} at ({screen.origin_x},{screen.origin_y})  "
+        f"\nScreen 0: {screen.width}x{screen.height} "
+        f"at ({screen.origin_x},{screen.origin_y})  "
         f"path={'DXGI' if screen.using_dxgi else 'GDI'}"
     )
 
