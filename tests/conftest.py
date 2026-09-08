@@ -43,11 +43,27 @@ class FakeScreen:
         self.using_dxgi = True
         self.calls: list[dict] = []
         self.raise_on_grab: Exception | None = None
+        # Pretend view: how far the camera has been turned, and how much mouse it
+        # takes to move the image one profile sample.
+        self._panned = 0
+        self.pan_ratio = 2.0
 
     def resize(self, width, height):
         """Simulates a display mode change, which the native layer follows."""
         self.width = width
         self.height = height
+
+    def profile(self, max_w, max_h, timeout_ms=16):
+        """A 1-D luma profile that pans with the fake cursor.
+
+        Modelled so that a mouse delta shifts it, which is what calibration
+        measures. pan_ratio is native mouse pixels per profile sample, i.e. exactly
+        the aim_ratio a correct calibration should recover.
+        """
+        dst_w, _ = _native.plan_fit(self.width, self.height, max_w, max_h, False)
+        offset = int(round(self._panned / self.pan_ratio))
+        # A repeating-but-not-periodic pattern, so a shift is unambiguous.
+        return [((x + offset) * 37) % 251 + ((x + offset) * 7) % 13 for x in range(dst_w)]
 
     def grab(self, **kwargs):
         self.calls.append(kwargs)
@@ -79,6 +95,9 @@ class RecordingInput:
         self.events: list[tuple] = []
         self.cursor = (960, 540)
         self.held: list[str] = []
+        # Optional FakeScreen to pan when a relative move happens, so aim
+        # calibration has a view that actually responds to the mouse.
+        self.screen = None
 
     def mouse_move(self, x, y):
         self.events.append(("mouse_move", x, y))
@@ -112,6 +131,8 @@ class RecordingInput:
     def mouse_move_relative(self, dx, dy, steps=1):
         self.events.append(("mouse_move_relative", dx, dy, steps))
         self.cursor = (self.cursor[0] + dx, self.cursor[1] + dy)
+        if self.screen is not None:
+            self.screen._panned += dx
 
     def key_down(self, chord):
         self.events.append(("key_down", chord))
@@ -183,9 +204,14 @@ def fake_screen():
 
 
 @pytest.fixture
-def session(config, fake_screen, monkeypatch):
-    """A Session backed by FakeScreen, so no capture or input touches the machine."""
+def session(config, fake_screen, fake_input, monkeypatch):
+    """A Session backed by FakeScreen, so no capture or input touches the machine.
+
+    The recorder is wired to the screen so a relative move pans the fake view, which
+    is what aim calibration measures.
+    """
     import cufast.session as session_mod
 
+    fake_input.screen = fake_screen
     monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
     return session_mod.Session(config)

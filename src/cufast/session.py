@@ -3,10 +3,28 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 from cufast import _native
 from cufast.config import Config
+
+
+# How far to turn when measuring the view's response to the mouse. Big enough to
+# shift the image well clear of the noise, small enough not to fling the camera
+# somewhere unrecoverable if the sensitivity turns out to be very high.
+AIM_PROBE_NATIVE_PX = 120
+# Tried when the first probe moved too little to measure, which is what a very low
+# sensitivity looks like.
+AIM_PROBE_RETRY_PX = 600
+# Below this the match is not distinguishable from the average candidate, which is
+# what a featureless or repeating view produces. Accepting it would bake a wrong
+# ratio into every later aim.
+AIM_MIN_CONFIDENCE = 0.12
+AIM_MIN_SHIFT_PX = 3
+# A ratio outside this says the measurement is wrong rather than the sensitivity
+# unusual: one native pixel of mouse cannot pan the view by twenty.
+AIM_RATIO_BOUNDS = (0.02, 200.0)
 
 
 class ActionError(Exception):
@@ -228,6 +246,58 @@ class Session:
 
         return to_int(dx, yaw_deg), to_int(dy, pitch_deg)
 
+    def _measure_pan(self, probe_native: int) -> tuple[int, float]:
+        """Turn by a known amount and measure how far the image moved.
+
+        Uses profiles rather than screenshots: the JPEG encode is most of the cost of
+        a capture and produces nothing this needs.
+        """
+        ref_w, _ = self._refresh_reference()
+        cfg = self.config
+        before = self.screen.profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
+        _native.mouse_move_relative(probe_native, 0, 1)
+        # The frame that shows the turn has to have been drawn before it can be
+        # measured, and settle_ms is allowed to be 0 in tests.
+        time.sleep(max(cfg.settle_ms, 50) / 1000.0)
+        after = self.screen.profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
+        shift, confidence = _native.best_shift(before, after, max(min(ref_w // 2, 400), 1))
+        return shift, confidence
+
+    def autocalibrate_aim(self) -> int:
+        """Works out the aim ratio by experiment. Returns native pixels already turned.
+
+        This exists because the first version of `aim` required the model to run a
+        calibration by hand first, and in an hour of real play it was used zero times
+        out of two hundred and thirty-three calls -- the model kept saying "aim at
+        the closest trunk" and then issuing a guessed pixel delta. A primitive with a
+        setup ritual loses to one that works immediately, so this removes the ritual.
+
+        The probe turns the view, which the caller must subtract from the turn it
+        then makes; that is why the amount turned is returned rather than hidden.
+        """
+        turned = 0
+        for probe in (AIM_PROBE_NATIVE_PX, AIM_PROBE_RETRY_PX):
+            shift, confidence = self._measure_pan(probe)
+            turned += probe
+            if confidence < AIM_MIN_CONFIDENCE or abs(shift) < AIM_MIN_SHIFT_PX:
+                continue
+            ratio = probe / abs(shift)
+            if not AIM_RATIO_BOUNDS[0] <= ratio <= AIM_RATIO_BOUNDS[1]:
+                continue
+            self.set_aim_ratio(ratio)
+            return turned
+
+        # Turn back, so a failed calibration leaves the view where it was found.
+        _native.mouse_move_relative(-turned, 0, 1)
+        raise ActionError(
+            "could not work out how the mouse maps to the view: turning the camera "
+            f"{turned} pixels did not move the image measurably. This happens when "
+            "the view is featureless (facing a wall or the sky) or when the "
+            "application does not respond to relative mouse movement at all. Face "
+            "something with visible detail and try again, or set the ratio yourself "
+            "with calibrate."
+        )
+
     def set_aim_ratio(self, ratio: float) -> None:
         if isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
             raise ActionError("aim_ratio must be a number")
@@ -249,12 +319,7 @@ class Session:
         aim converges, and by then the target is near the centre where it is linear.
         """
         if self.aim_ratio is None:
-            raise ActionError(
-                "aim needs a calibration first. Pick something you can see off to one "
-                "side, note its x, issue a mouse_move_rel, then screenshot and see "
-                "where it moved to. aim_ratio is the native pixels moved divided by "
-                "how far it shifted on screen. Pass it to calibrate."
-            )
+            raise ActionError("aim is not calibrated")  # pragma: no cover - aim() calibrates
         ref_w, ref_h = self._refresh_reference()
         x = self._check_axis(x, ref_w, "x")
         y = self._check_axis(y, ref_h, "y")

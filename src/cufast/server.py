@@ -59,16 +59,16 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
                        to a position, in screenshot pixels. Positive dx is right,
                        positive dy is down. See POINTER-LOCKED APPS below.
   aim               -- {"coordinate": [x, y]}. Turn the view so that whatever is at
-                       that screenshot pixel ends up on the crosshair. This is the
-                       one to use in a 3D game: say where the thing is, not how far
-                       to turn. Needs `calibrate` once first.
+                       that screenshot pixel ends up on the crosshair. THIS IS THE
+                       ONE TO USE IN A 3D GAME: say where the thing is, not how far
+                       to turn. No setup -- the first call measures the mouse
+                       sensitivity itself and remembers it.
   look              -- {"yaw": deg, "pitch": deg}. Turn by an angle, for turning to
                        something you cannot currently see ("turn around" is yaw 180).
                        Positive yaw is right, positive pitch is down. Needs
-                       `calibrate` once first.
-  calibrate         -- {"aim_ratio": n, "look_degrees_per_pixel": n}. Teaches this
-                       display how the mouse maps to the view. Persists for later
-                       calls. See CALIBRATING below.
+                       `calibrate` first; `aim` does not.
+  calibrate         -- {"aim_ratio": n, "look_degrees_per_pixel": n}. Optional. Only
+                       needed for `look`, or to override what `aim` measured.
   left_mouse_down / left_mouse_up -- {}. Act at the current cursor position.
   cursor_position   -- {}. Reports the cursor as "X=..., Y=..." in screenshot space.
   scroll            -- {"scroll_direction": "up"|"down"|"left"|"right",
@@ -97,15 +97,16 @@ symptoms of using the wrong action are specific and worth recognising:
     `mouse_move` turns it again by the same amount instead of doing nothing.
 Once you see either, switch to `mouse_move_rel` and stop reasoning about position.
 
-CALIBRATING (do this once per game, in two calls, before doing anything else).
-  1. Pick something distinctive off to one side and note its x. Issue
-     {"action": "mouse_move_rel", "dx": 100} and screenshot.
-  2. See where it moved to. aim_ratio is the NATIVE pixels reported in the result
-     divided by how far the thing shifted on screen. If an in-game readout shows the
-     angle (Minecraft: F3 shows Yaw and Pitch), look_degrees_per_pixel is the degrees
-     turned divided by the 100 you asked for.
-  3. Pass them to `calibrate`. From then on use `aim` and `look` and never do this
-     arithmetic again. Recalibrate if the game's sensitivity or FOV setting changes.
+AIMING. Use `aim` and do not compute mouse deltas by hand. The first `aim` turns
+the view slightly, measures how far the image actually moved, works out the
+sensitivity from that, and folds the measurement into the turn it was asked for --
+so it costs nothing extra and you never see it. It reports the ratio it found. If
+the view is featureless at that moment (facing a wall, or straight at the sky) it
+says so rather than guessing; face something with detail and repeat.
+
+`look` still needs `calibrate` with look_degrees_per_pixel: turn by a known amount,
+read the angle off an in-game readout (Minecraft: F3 shows Yaw and Pitch), and
+divide. `aim` needs none of this.
 
 `aim` is near-exact for anything within the middle of the view and lands slightly
 short for something at the very edge, because a perspective view is a tangent rather
@@ -131,7 +132,8 @@ matters; the only thing that matters is making fewer calls. So:
     when you genuinely do not know what happened.
   - Pass auto_screenshot=false on a call whose result you do not need to see.
   - Never issue a turn, look, correct, look again. That is three round trips for one
-    decision, and it is what `aim` exists to prevent.
+    decision, and it is what `aim` exists to prevent. If you catch yourself sending
+    mouse_move_rel at a target you can see, use `aim` instead.
 
 A good game batch looks like this -- one call, six actions:
   [{"action": "aim", "coordinate": [430, 250]},

@@ -20,11 +20,77 @@ def aimed(session):
     return session
 
 
-class TestCalibrationIsRequired:
-    def test_aim_without_calibration_explains_how(self, session):
-        with pytest.raises(ActionError, match="calibration"):
-            session.aim_delta(100, 100)
+class TestAutoCalibration:
+    """aim must work on first use, with no setup.
 
+    The first version required the model to calibrate by hand first. In an hour of
+    real play it was used zero times in 233 calls: the model kept narrating "aim at
+    the closest trunk" and then issuing a guessed pixel delta. A primitive with a
+    setup ritual loses to one that works immediately.
+    """
+
+    def test_aim_works_with_no_calibration_at_all(self, session, fake_input):
+        assert session.aim_ratio is None
+        result = execute(session, "aim", {"coordinate": [700, 288]})
+        assert session.aim_ratio is not None
+        assert "calibrated itself" in result.text
+
+    def test_it_recovers_the_true_ratio(self, session, fake_screen):
+        fake_screen.pan_ratio = 3.5
+        session.autocalibrate_aim()
+        assert session.aim_ratio == pytest.approx(3.5, rel=0.05)
+
+    def test_it_returns_how_far_it_turned(self, session):
+        from cufast.session import AIM_PROBE_NATIVE_PX
+
+        assert session.autocalibrate_aim() == AIM_PROBE_NATIVE_PX
+
+    def test_the_probe_is_subtracted_from_the_aim(self, session, fake_screen, fake_input):
+        # The probe turns the view, and the coordinate was given against the frame
+        # before it, so that much of the turn is already done. Aiming the full amount
+        # on top would overshoot by exactly the probe.
+        from cufast.session import AIM_PROBE_NATIVE_PX
+
+        fake_screen.pan_ratio = 2.0
+        execute(session, "aim", {"coordinate": [712, 288]})
+        moves = [e for e in fake_input.events if e[0] == "mouse_move_relative"]
+        assert sum(m[1] for m in moves) == 400  # (712-512) * 2.0, probe included
+
+    def test_it_only_calibrates_once(self, session, fake_input):
+        execute(session, "aim", {"coordinate": [600, 288]})
+        first = session.aim_ratio
+        before = len(fake_input.events)
+        result = execute(session, "aim", {"coordinate": [600, 288]})
+        assert session.aim_ratio == first
+        assert "calibrated itself" not in result.text
+        assert len(fake_input.events) - before == 1  # just the aim, no probe
+
+    def test_an_explicit_calibration_skips_the_probe(self, session, fake_input):
+        session.set_aim_ratio(2.0)
+        execute(session, "aim", {"coordinate": [712, 288]})
+        assert fake_input.events == [("mouse_move_relative", 400, 0, 1)]
+
+    def test_a_featureless_view_is_reported_not_guessed(self, session, fake_screen,
+                                                        monkeypatch):
+        # A flat profile matches equally well at every shift. Believing it would bake
+        # a wrong ratio into every later aim, so it must fail loudly instead.
+        monkeypatch.setattr(fake_screen, "profile",
+                            lambda max_w, max_h, timeout_ms=16: [128] * 1024)
+        with pytest.raises(ActionError, match="featureless|did not move"):
+            session.autocalibrate_aim()
+        assert session.aim_ratio is None
+
+    def test_a_failed_calibration_puts_the_view_back(self, session, fake_screen,
+                                                     fake_input, monkeypatch):
+        monkeypatch.setattr(fake_screen, "profile",
+                            lambda max_w, max_h, timeout_ms=16: [128] * 1024)
+        with pytest.raises(ActionError):
+            session.autocalibrate_aim()
+        moves = [e for e in fake_input.events if e[0] == "mouse_move_relative"]
+        assert sum(m[1] for m in moves) == 0  # every probe undone
+
+
+class TestCalibrationIsRequired:
     def test_look_without_calibration_explains_how(self, session):
         with pytest.raises(ActionError, match="calibration"):
             session.look_delta(30, 0)
@@ -183,6 +249,15 @@ class TestAliases:
     def test_relative_move_spellings(self, session, fake_input, alias):
         execute(session, alias, {"dx": 100})
         assert fake_input.events[-1][0] == "mouse_move_relative"
+
+    @pytest.mark.parametrize("alias, real", [
+        ("mouse_down", "mouse_down"), ("mouse_up", "mouse_up"), ("click", "mouse_click"),
+    ])
+    def test_click_spellings(self, session, fake_input, alias, real):
+        # mouse_down was issued for real and rejected. The click actions carry no
+        # "left_" prefix while the button ones do, so dropping it is a fair mistake.
+        execute(session, alias, {})
+        assert fake_input.events[-1][0] == real
 
     def test_an_unknown_action_still_fails(self):
         with pytest.raises(ActionError, match="unknown action"):

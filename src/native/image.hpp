@@ -68,6 +68,32 @@ void rotate_bgra(const uint8_t* src, int src_stride, int src_w, int src_h,
 std::vector<uint8_t> encode_jpeg(const uint8_t* bgr, int w, int h, float quality);
 std::vector<uint8_t> encode_png(const uint8_t* bgr, int w, int h);
 
+// Sums luma per column over the middle band of a packed 24bpp BGR image.
+//
+// A camera pan moves the whole image sideways, so projecting to one dimension turns
+// a 2-D image match into a 1-D one: hundreds of times cheaper, and more robust,
+// because everything that is not a horizontal displacement averages away. The middle
+// band only, because the sky is featureless and the HUD does not move with the
+// camera -- both would dilute the match with signal that says nothing about the pan.
+std::vector<int32_t> column_profile(const uint8_t* bgr, int w, int h);
+
+// How far `b` is displaced from `a`, in profile samples, searching +/- max_shift.
+//
+// Matched on the first difference of the profiles rather than the profiles
+// themselves, so a brightness change between the two frames -- a cloud, a torch, the
+// sun moving -- cancels instead of swamping the score.
+//
+// confidence is 0 when every candidate shift scores alike, which is what a
+// featureless or repeating view produces, and near 1 when one shift clearly wins.
+// The caller must check it: a confident wrong answer would silently miscalibrate
+// every later aim.
+struct ShiftEstimate {
+    int shift = 0;
+    double confidence = 0.0;
+};
+ShiftEstimate best_shift(const std::vector<int32_t>& a, const std::vector<int32_t>& b,
+                         int max_shift);
+
 // 64-bit content hash of a BGR buffer, for cheap "did the screen change" checks.
 uint64_t hash_bgr(const uint8_t* bgr, size_t len);
 

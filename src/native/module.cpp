@@ -74,6 +74,19 @@ public:
         return shot;
     }
 
+    // The 1-D luma profile of the current frame, for measuring how far the view
+    // panned between two captures. Skips the JPEG encode, which is most of the cost
+    // of a screenshot and produces nothing this needs.
+    std::vector<int32_t> profile(int max_w, int max_h, int timeout_ms) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // No cursor: it does not move with the camera, so compositing it in would
+        // plant a fixed feature in a signal that is entirely about movement.
+        FrameView frame = capture_.grab(false, timeout_ms);
+        ScalePlan plan = plan_fit(frame.width, frame.height, max_w, max_h, false);
+        downscale_bgra_to_bgr(frame, plan, pixels_, scratch_);
+        return column_profile(pixels_.data(), plan.dst_w, plan.dst_h);
+    }
+
     // Hash of the monitor downscaled to a small fixed grid. Cheap enough to poll,
     // and coarse enough that cursor blink or a caret does not read as a change.
     uint64_t sample_hash(int grid_w, int grid_h, int timeout_ms) {
@@ -157,6 +170,13 @@ NB_MODULE(_native, m) {
                 return self.sample_hash(grid_w, grid_h, timeout_ms);
             },
             nb::arg("grid_w") = 160, nb::arg("grid_h") = 90, nb::arg("timeout_ms") = 16)
+        .def(
+            "profile",
+            [](Screen& self, int max_w, int max_h, int timeout_ms) {
+                nb::gil_scoped_release release;
+                return self.profile(max_w, max_h, timeout_ms);
+            },
+            nb::arg("max_w"), nb::arg("max_h"), nb::arg("timeout_ms") = 16)
         .def_prop_ro("width", &Screen::width)
         .def_prop_ro("height", &Screen::height)
         .def_prop_ro("origin_x", &Screen::origin_x)
@@ -318,6 +338,18 @@ NB_MODULE(_native, m) {
         nb::arg("chord"));
 
     m.def("held_keys", &held_keys);
+
+    m.def(
+        "best_shift",
+        [](const std::vector<int32_t>& a, const std::vector<int32_t>& b, int max_shift) {
+            ShiftEstimate est;
+            {
+                nb::gil_scoped_release release;
+                est = best_shift(a, b, max_shift);
+            }
+            return nb::make_tuple(est.shift, est.confidence);
+        },
+        nb::arg("a"), nb::arg("b"), nb::arg("max_shift"));
     m.def("_relative_step_plan", &relative_step_plan,
           nb::arg("dx"), nb::arg("dy"), nb::arg("steps"));
 

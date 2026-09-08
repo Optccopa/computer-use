@@ -109,6 +109,12 @@ _ALIASES = {
     "rel_move": "mouse_move_rel",
     "screen_shot": "screenshot",
     "capture": "screenshot",
+    # Observed in a real session: the model dropped the "left_" prefix, which the
+    # click actions do not have either, so the asymmetry is a fair thing to trip on.
+    "mouse_down": "left_mouse_down",
+    "mouse_up": "left_mouse_up",
+    "click": "left_click",
+    "mouse_click": "left_click",
 }
 
 
@@ -330,12 +336,22 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
 
     if name == "aim":
         x, y = _coordinate(params["coordinate"], "coordinate")
+        # Calibrating here rather than making the model do it first is the whole
+        # point: a primitive with a setup step does not get used.
+        note = ""
+        already_turned = 0
+        if session.aim_ratio is None:
+            already_turned = session.autocalibrate_aim()
+            note = f" [calibrated itself: aim_ratio={session.aim_ratio:.3g}]"
         dx, dy = session.aim_delta(x, y)
+        # The probe turned the view as a side effect, and the coordinate was given
+        # against the frame from before it, so that much of the turn is already done.
+        dx -= already_turned
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
         return ActionResult(
             name,
             text=f"OK (turned {dx:+d}, {dy:+d} native pixels to bring ({x:g}, {y:g}) "
-            "onto the crosshair)",
+            f"onto the crosshair){note}",
         )
 
     if name == "look":
