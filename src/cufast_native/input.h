@@ -12,6 +12,11 @@ namespace cufast {
 // Safe to call repeatedly; a no-op once awareness is set.
 void enable_dpi_awareness();
 
+// Whether per-monitor awareness actually took effect. It does not if a manifest or
+// an earlier call already set a different mode, and in that case every coordinate is
+// virtualized on a scaled display -- silently wrong rather than visibly broken.
+bool dpi_per_monitor_aware();
+
 // The kill switch. Every injection routine checks this first and throws when set,
 // so one flag disarms the whole harness.
 void set_input_blocked(bool blocked);

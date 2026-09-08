@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from cufast import _native
@@ -20,6 +21,19 @@ class Screenshot:
     media_type: str
 
 
+def _span(index: int, ref: int, native: int) -> tuple[int, int]:
+    """The half-open native range that produced screenshot pixel `index`.
+
+    Mirrors the downscaler exactly: destination pixel x averages source columns
+    [x*native/ref, (x+1)*native/ref).
+    """
+    start = (index * native) // ref
+    end = ((index + 1) * native) // ref
+    if end <= start:
+        end = start + 1
+    return start, min(end, native)
+
+
 class Session:
     """One display, one coordinate frame.
 
@@ -35,70 +49,115 @@ class Session:
     """
 
     def __init__(self, config: Config) -> None:
+        config.validate()
         self.config = config
         self.screen = _native.Screen(config.display_index)
-        # plan_fit comes from the C++ side so this matches the encoder exactly
-        # rather than re-deriving the rounding rules in Python.
-        self.ref_width, self.ref_height = _native.plan_fit(
-            self.screen.width, self.screen.height, config.max_width, config.max_height, False
-        )
+        self._native_size = (0, 0)
+        self._ref = (0, 0)
+        self._refresh_reference()
+
+    def _refresh_reference(self) -> tuple[int, int]:
+        """Recomputes the screenshot size whenever the display mode changes.
+
+        The native layer follows resolution changes, so caching this once at
+        construction would leave the mapping using a live numerator against a stale
+        denominator -- clicks land hundreds of pixels away, and coordinates that are
+        legal in the delivered image get rejected against a resolution the model was
+        never shown.
+        """
+        native = (self.screen.width, self.screen.height)
+        if native != self._native_size:
+            self._native_size = native
+            # plan_fit comes from the C++ side so this matches the encoder exactly
+            # rather than re-deriving the rounding rules in Python.
+            self._ref = _native.plan_fit(
+                native[0], native[1], self.config.max_width, self.config.max_height, False
+            )
+        return self._ref
+
+    @property
+    def ref_width(self) -> int:
+        return self._refresh_reference()[0]
+
+    @property
+    def ref_height(self) -> int:
+        return self._refresh_reference()[1]
 
     @property
     def using_dxgi(self) -> bool:
         return self.screen.using_dxgi
 
     def describe(self) -> str:
+        ref_w, ref_h = self._refresh_reference()
         return (
             f"display {self.screen.index}: {self.screen.width}x{self.screen.height} native "
             f"at ({self.screen.origin_x},{self.screen.origin_y}), "
-            f"screenshots are {self.ref_width}x{self.ref_height} "
+            f"screenshots are {ref_w}x{ref_h} "
             f"via {'DXGI Desktop Duplication' if self.using_dxgi else 'GDI BitBlt'}"
         )
 
     # -- coordinates ----------------------------------------------------------
 
+    def _out_of_frame(self, axis: str, value: float) -> ActionError:
+        ref_w, ref_h = self._refresh_reference()
+        return ActionError(
+            f"{axis}={value:g} is outside the screenshot, which is {ref_w}x{ref_h}. "
+            f"Coordinates must be in the pixel space of the screenshot you were given, "
+            f"not the native display resolution "
+            f"({self.screen.width}x{self.screen.height})."
+        )
+
     def _check_axis(self, value: float, limit: int, axis: str) -> float:
-        if value < 0 or value >= limit:
-            # A coordinate well outside the frame almost always means the model
-            # worked from native display pixels instead of the screenshot it was
-            # given. Saying so is far better than clamping and clicking somewhere
-            # plausible but wrong.
-            slack = max(2.0, limit * 0.02)
-            if value < -slack or value >= limit + slack:
-                raise ActionError(
-                    f"{axis}={value:g} is outside the screenshot, which is "
-                    f"{self.ref_width}x{self.ref_height}. Coordinates must be in the "
-                    f"pixel space of the screenshot you were given, not the native "
-                    f"display resolution ({self.screen.width}x{self.screen.height})."
-                )
+        # Only rounding-width slack is tolerated. A wider window would silently clamp
+        # a genuinely wrong coordinate onto the far edge, and at typical scale factors
+        # a few screenshot pixels is tens of native pixels -- wider than a scrollbar
+        # or a close button, so it would click something plausible but wrong.
+        if value < -1.0 or value >= limit + 1.0:
+            raise self._out_of_frame(axis, value)
         return min(max(value, 0.0), float(limit - 1))
 
     def to_local(self, x: float, y: float) -> tuple[int, int]:
         """Screenshot pixel -> monitor-local pixel."""
-        x = self._check_axis(x, self.ref_width, "x")
-        y = self._check_axis(y, self.ref_height, "y")
-        # Map the centre of the destination pixel to the centre of the source box,
-        # so a click lands mid-target instead of biased to its top-left corner.
-        lx = (x + 0.5) * self.screen.width / self.ref_width
-        ly = (y + 0.5) * self.screen.height / self.ref_height
-        return (
-            min(int(lx), self.screen.width - 1),
-            min(int(ly), self.screen.height - 1),
-        )
+        ref_w, ref_h = self._refresh_reference()
+        x = self._check_axis(x, ref_w, "x")
+        y = self._check_axis(y, ref_h, "y")
+
+        # Aim at the centre of the source box, then confine the result to that box.
+        # Without the clamp the centre can round past the span end whenever the scale
+        # factor is below 2 -- at 1366x768 into a 1024-wide frame that is a third of
+        # all columns landing on a pixel belonging to the neighbouring one.
+        xi, yi = int(x), int(y)
+        sx0, sx1 = _span(xi, ref_w, self.screen.width)
+        sy0, sy1 = _span(yi, ref_h, self.screen.height)
+        lx = min(max(int((x + 0.5) * self.screen.width / ref_w), sx0), sx1 - 1)
+        ly = min(max(int((y + 0.5) * self.screen.height / ref_h), sy0), sy1 - 1)
+        return lx, ly
 
     def to_screen(self, x: float, y: float) -> tuple[int, int]:
         """Screenshot pixel -> absolute virtual-desktop pixel, ready for SendInput."""
         lx, ly = self.to_local(x, y)
         return lx + self.screen.origin_x, ly + self.screen.origin_y
 
-    def cursor_in_screenshot_space(self) -> tuple[int, int]:
-        """Absolute cursor position expressed in the frame the model reasons about."""
+    def cursor_in_screenshot_space(self) -> tuple[int, int, bool]:
+        """Cursor position in the frame the model reasons about.
+
+        Returns (x, y, on_this_display). The cursor is a desktop-global position and
+        may be on another monitor, so this must not hand back a coordinate that
+        to_screen would immediately reject.
+        """
+        ref_w, ref_h = self._refresh_reference()
         sx, sy = _native.cursor_position()
         lx = sx - self.screen.origin_x
         ly = sy - self.screen.origin_y
-        x = int(lx * self.ref_width / self.screen.width)
-        y = int(ly * self.ref_height / self.screen.height)
-        return x, y
+        on_display = 0 <= lx < self.screen.width and 0 <= ly < self.screen.height
+
+        x = math.floor(lx * ref_w / self.screen.width)
+        y = math.floor(ly * ref_h / self.screen.height)
+        return (
+            min(max(x, 0), ref_w - 1),
+            min(max(y, 0), ref_h - 1),
+            on_display,
+        )
 
     # -- capture --------------------------------------------------------------
 
@@ -111,30 +170,50 @@ class Session:
             draw_cursor=cfg.draw_cursor,
             timeout_ms=cfg.capture_timeout_ms,
         )
+        # The delivered image defines the coordinate space, so keep the reference in
+        # step with what the model actually received.
+        self._native_size = (self.screen.width, self.screen.height)
+        self._ref = (shot.width, shot.height)
         return Screenshot(shot.data, shot.width, shot.height, "image/jpeg")
 
     def zoom(self, region: list[float]) -> Screenshot:
         """Re-capture one region of the screen at full resolution.
 
-        The region arrives in screenshot coordinates as [x0, y0, x1, y1]. Output is
-        capped at the normal screenshot size and is never upscaled, matching the
-        spec's "full resolution, scaled to fit".
+        The region arrives in screenshot coordinates as [x0, y0, x1, y1], with the
+        far corner exclusive. Output is capped at the normal screenshot size and is
+        never upscaled, matching the spec's "full resolution, scaled to fit".
         """
         if len(region) != 4:
             raise ActionError("region must be [x0, y0, x1, y1]")
         x0, y0, x1, y1 = region
+        if not all(math.isfinite(v) for v in region):
+            raise ActionError("region values must be finite numbers")
+
+        ref_w, ref_h = self._refresh_reference()
+        # The far corner is exclusive, so it may equal the frame size but no more.
+        # Validating it matters: it is the one coordinate path that would otherwise
+        # bypass the check that catches native-resolution coordinates.
+        self._check_axis(x0, ref_w, "x0")
+        self._check_axis(y0, ref_h, "y0")
+        if not -1.0 <= x1 <= ref_w + 1.0:
+            raise self._out_of_frame("x1", x1)
+        if not -1.0 <= y1 <= ref_h + 1.0:
+            raise self._out_of_frame("y1", y1)
         if x1 <= x0 or y1 <= y0:
             raise ActionError(
                 f"region must have x1 > x0 and y1 > y0, got [{x0:g}, {y0:g}, {x1:g}, {y1:g}]"
             )
 
-        lx0, ly0 = self.to_local(x0, y0)
-        # The far corner is exclusive, so clamp it against the frame rather than
-        # running it through the pixel-centre mapping used for click targets.
-        lx1 = min(int(round(x1 * self.screen.width / self.ref_width)), self.screen.width)
-        ly1 = min(int(round(y1 * self.screen.height / self.ref_height)), self.screen.height)
-        w = max(1, lx1 - lx0)
-        h = max(1, ly1 - ly0)
+        # Both corners floor through the same span arithmetic the downscaler uses, so
+        # the captured rectangle is exactly the native area behind those pixels.
+        native_w, native_h = self.screen.width, self.screen.height
+        lx0 = min(max(int(math.floor(x0)), 0), ref_w - 1) * native_w // ref_w
+        ly0 = min(max(int(math.floor(y0)), 0), ref_h - 1) * native_h // ref_h
+        lx1 = min(max(int(math.ceil(x1)), 1), ref_w) * native_w // ref_w
+        ly1 = min(max(int(math.ceil(y1)), 1), ref_h) * native_h // ref_h
+
+        w = max(1, min(lx1, native_w) - lx0)
+        h = max(1, min(ly1, native_h) - ly0)
 
         cfg = self.config
         shot = self.screen.grab(

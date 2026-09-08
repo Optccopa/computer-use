@@ -1,6 +1,7 @@
 #include "image.h"
 
 #include <immintrin.h>
+#include <intrin.h>
 #include <objbase.h>
 #include <wincodec.h>
 
@@ -11,10 +12,16 @@
 namespace cufast {
 namespace {
 
-// WIC needs COM on the calling thread. We deliberately never CoUninitialize:
-// the factory is cached thread_local and would otherwise be released against a
-// torn-down apartment. RPC_E_CHANGED_MODE means COM is already up as an STA,
-// which WIC is equally happy with.
+// Above this span the 16-bit reciprocal cannot round-trip 255 exactly (the error
+// term grows with the span), so those columns divide exactly instead. Realistic
+// screenshot spans are 1-4, so the division path is effectively never taken.
+constexpr int kMaxReciprocalSpan = 256;
+
+// WIC needs COM on the calling thread. CoUninitialize is deliberately never called:
+// the RPC_E_CHANGED_MODE branch means COM was already initialised by someone else as
+// an STA, and this guard does not record whether it was the one that initialised it,
+// so it is not entitled to tear it down. The factory is released at thread exit by
+// its own ComPtr, which is declared after the guard and so destroyed before it.
 struct ComGuard {
     ComGuard() {
         HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -33,23 +40,68 @@ IWICImagingFactory* wic_factory() {
     return factory.get();
 }
 
-// Horizontal box average for the case where every destination pixel spans at most
-// two source pixels -- that is, any downscale between 0.5x and 1.0x, which covers
-// both recommended screenshot sizes on a 1080p display.
+// Balances GlobalLock even if the copy out of the mapped block throws.
+class GlobalLockGuard {
+public:
+    explicit GlobalLockGuard(HGLOBAL handle) : handle_(handle), data_(GlobalLock(handle)) {
+        if (!data_) throw Error("GlobalLock failed");
+    }
+    ~GlobalLockGuard() { GlobalUnlock(handle_); }
+    GlobalLockGuard(const GlobalLockGuard&) = delete;
+    GlobalLockGuard& operator=(const GlobalLockGuard&) = delete;
+    const uint8_t* data() const { return static_cast<const uint8_t*>(data_); }
+
+private:
+    HGLOBAL handle_;
+    void* data_;
+};
+
+// Packs 4 BGRA dwords per 128-bit lane down to 12 bytes of BGR. VPSHUFB is strictly
+// per-lane, so both halves carry the same mask.
+inline __m256i bgr_pack_mask() {
+    return _mm256_setr_epi8(0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1,
+                            0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1);
+}
+
+// Stores 8 packed BGR pixels (24 bytes) from a shuffled register. Writes 4 bytes
+// past the 24, which is why the destination carries 16 bytes of slack; rows are
+// filled in increasing order so each row's spill is overwritten by the next.
+inline void store_8_bgr(uint8_t* out, __m256i packed) {
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out), _mm256_castsi256_si128(packed));
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 12), _mm256_extracti128_si256(packed, 1));
+}
+
+// Identity scale: drop alpha, no averaging. Used for zoom, which captures at native
+// resolution. Worth its own path because the general narrow kernel would issue two
+// gathers over identical indices here, and gathers are ~24 cycles each.
+void horiz_pack_avx2(const uint8_t* src_row, uint8_t* dst_row, int dw) {
+    const __m256i pack = bgr_pack_mask();
+    int x = 0;
+    for (; x + 8 <= dw; x += 8) {
+        const __m256i pixels =
+            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_row + static_cast<size_t>(x) * 4));
+        store_8_bgr(dst_row + static_cast<size_t>(x) * 3, _mm256_shuffle_epi8(pixels, pack));
+    }
+    for (; x < dw; ++x) {
+        const uint8_t* p = src_row + static_cast<size_t>(x) * 4;
+        uint8_t* d = dst_row + static_cast<size_t>(x) * 3;
+        d[0] = p[0];
+        d[1] = p[1];
+        d[2] = p[2];
+    }
+}
+
+// Horizontal box average where every destination pixel spans at most two source
+// pixels -- any downscale between 0.5x and 1.0x, which covers both recommended
+// screenshot sizes on a 1080p display.
 //
-// For a two-pixel box the box average is (a + b + 1) >> 1 per channel, which is
-// precisely _mm256_avg_epu8. For a one-pixel box the second index is made equal to
-// the first, and (p + p + 1) >> 1 == p, so both spans run through the same
-// instruction with no branch. The scalar path computes bit-identical results.
-//
-// Writes up to 4 bytes past the last destination pixel, so dst must carry 16 bytes
-// of slack. Rows are filled in increasing order, so the spill from one row is
-// overwritten by the next; only the final row needs real padding.
+// A two-pixel box average is (a + b + 1) >> 1 per channel, which is precisely
+// _mm256_avg_epu8. A one-pixel span points both indices at the same pixel, and
+// (p + p + 1) >> 1 == p, so both spans run through one instruction with no branch.
+// The scalar general path computes bit-identical results.
 void horiz_avg2_avx2(const uint8_t* src_row, uint8_t* dst_row, int dw, const int32_t* idx_lo,
                      const int32_t* idx_hi) {
-    // Packs 4 BGRA dwords per 128-bit lane down to 12 bytes of BGR.
-    const __m256i pack = _mm256_setr_epi8(0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1,
-                                          0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, -1, -1, -1, -1);
+    const __m256i pack = bgr_pack_mask();
     const auto* base = reinterpret_cast<const int*>(src_row);
 
     int x = 0;
@@ -58,24 +110,21 @@ void horiz_avg2_avx2(const uint8_t* src_row, uint8_t* dst_row, int dw, const int
         const __m256i i1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(idx_hi + x));
         const __m256i p0 = _mm256_i32gather_epi32(base, i0, 4);
         const __m256i p1 = _mm256_i32gather_epi32(base, i1, 4);
-        const __m256i packed = _mm256_shuffle_epi8(_mm256_avg_epu8(p0, p1), pack);
-
-        uint8_t* out = dst_row + static_cast<size_t>(x) * 3;
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(out), _mm256_castsi256_si128(packed));
-        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 12),
-                         _mm256_extracti128_si256(packed, 1));
+        store_8_bgr(dst_row + static_cast<size_t>(x) * 3,
+                    _mm256_shuffle_epi8(_mm256_avg_epu8(p0, p1), pack));
     }
     for (; x < dw; ++x) {
         const uint8_t* a = src_row + static_cast<size_t>(idx_lo[x]) * 4;
         const uint8_t* b = src_row + static_cast<size_t>(idx_hi[x]) * 4;
-        dst_row[x * 3 + 0] = static_cast<uint8_t>((a[0] + b[0] + 1) >> 1);
-        dst_row[x * 3 + 1] = static_cast<uint8_t>((a[1] + b[1] + 1) >> 1);
-        dst_row[x * 3 + 2] = static_cast<uint8_t>((a[2] + b[2] + 1) >> 1);
+        uint8_t* d = dst_row + static_cast<size_t>(x) * 3;
+        d[0] = static_cast<uint8_t>((a[0] + b[0] + 1) >> 1);
+        d[1] = static_cast<uint8_t>((a[1] + b[1] + 1) >> 1);
+        d[2] = static_cast<uint8_t>((a[2] + b[2] + 1) >> 1);
     }
 }
 
 // Vertical average of exactly two rows, the counterpart of the above for the same
-// scale range. Contiguous, so no gathers are involved.
+// scale range. Contiguous, so no gathers are involved and no spill is written.
 void vert_avg2_avx2(const uint8_t* row_a, const uint8_t* row_b, uint8_t* dst, size_t bytes) {
     size_t i = 0;
     for (; i + 32 <= bytes; i += 32) {
@@ -84,6 +133,19 @@ void vert_avg2_avx2(const uint8_t* row_a, const uint8_t* row_b, uint8_t* dst, si
         _mm256_storeu_si256(reinterpret_cast<__m256i*>(dst + i), _mm256_avg_epu8(a, b));
     }
     for (; i < bytes; ++i) dst[i] = static_cast<uint8_t>((row_a[i] + row_b[i] + 1) >> 1);
+}
+
+// Rounds 65536/n to nearest rather than flooring it. Flooring biases every average
+// dark, and past a span of ~145 a pure white region stops rounding back to 255.
+// Returns 0 for spans too large for 16 bits of reciprocal to stay exact.
+uint32_t reciprocal_for(int n) {
+    if (n > kMaxReciprocalSpan) return 0;
+    return (65536u + static_cast<uint32_t>(n) / 2u) / static_cast<uint32_t>(n);
+}
+
+inline uint8_t average(uint32_t sum, uint32_t recip, int n) {
+    if (recip) return static_cast<uint8_t>((sum * recip + 32768u) >> 16);
+    return static_cast<uint8_t>((sum + static_cast<uint32_t>(n) / 2u) / static_cast<uint32_t>(n));
 }
 
 std::vector<uint8_t> encode_wic(const uint8_t* bgr, int w, int h, const GUID& container,
@@ -103,7 +165,8 @@ std::vector<uint8_t> encode_wic(const uint8_t* bgr, int w, int h, const GUID& co
     ComPtr<IPropertyBag2> props;
     hr_check(encoder->CreateNewFrame(frame.put(), props.put()), "CreateNewFrame");
 
-    if (quality && props) {
+    if (quality) {
+        if (!props) throw Error("JPEG encoder exposed no property bag for ImageQuality");
         // PROPBAG2::pstrName is LPOLESTR (non-const), so the name must be writable.
         wchar_t name[] = L"ImageQuality";
         PROPBAG2 option{};
@@ -111,7 +174,9 @@ std::vector<uint8_t> encode_wic(const uint8_t* bgr, int w, int h, const GUID& co
         VARIANT value{};
         value.vt = VT_R4;
         value.fltVal = *quality;
-        props->Write(1, &option, &value);
+        // Ignoring this would silently fall back to WIC's default quality of 0.9 and
+        // make every screenshot materially larger than configured, with no error.
+        hr_check(props->Write(1, &option, &value), "set ImageQuality");
     }
     hr_check(frame->Initialize(props.get()), "frame Initialize");
     hr_check(frame->SetSize(static_cast<UINT>(w), static_cast<UINT>(h)), "SetSize");
@@ -126,29 +191,31 @@ std::vector<uint8_t> encode_wic(const uint8_t* bgr, int w, int h, const GUID& co
 
     const UINT stride = static_cast<UINT>(w) * 3;
     const UINT total = stride * static_cast<UINT>(h);
-    hr_check(frame->WritePixels(static_cast<UINT>(h), stride, total,
-                                const_cast<BYTE*>(bgr)),
+    hr_check(frame->WritePixels(static_cast<UINT>(h), stride, total, const_cast<BYTE*>(bgr)),
              "WritePixels");
     hr_check(frame->Commit(), "frame Commit");
     hr_check(encoder->Commit(), "encoder Commit");
 
-    // GlobalSize reports the allocation, which overshoots; Stat reports what was
-    // actually written.
+    // GlobalSize reports the page-rounded allocation; Stat reports bytes written.
     STATSTG stat{};
     hr_check(stream->Stat(&stat, STATFLAG_NONAME), "stream Stat");
     const size_t size = static_cast<size_t>(stat.cbSize.QuadPart);
 
     HGLOBAL handle = nullptr;
     hr_check(GetHGlobalFromStream(stream.get(), &handle), "GetHGlobalFromStream");
-    void* mapped = GlobalLock(handle);
-    if (!mapped) throw Error("GlobalLock failed");
-    std::vector<uint8_t> out(static_cast<const uint8_t*>(mapped),
-                             static_cast<const uint8_t*>(mapped) + size);
-    GlobalUnlock(handle);
-    return out;
+    GlobalLockGuard locked(handle);
+    return std::vector<uint8_t>(locked.data(), locked.data() + size);
 }
 
 }  // namespace
+
+bool cpu_supports_avx2() {
+    int info[4] = {0, 0, 0, 0};
+    __cpuid(info, 0);
+    if (info[0] < 7) return false;
+    __cpuidex(info, 7, 0);
+    return (info[1] & (1 << 5)) != 0;  // EBX bit 5 = AVX2
+}
 
 ScalePlan plan_fit(int src_w, int src_h, int max_w, int max_h, bool allow_upscale) {
     if (src_w <= 0 || src_h <= 0) throw Error("plan_fit: empty source region");
@@ -170,7 +237,7 @@ ScalePlan plan_fit(int src_w, int src_h, int max_w, int max_h, bool allow_upscal
 }
 
 void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
-                           std::vector<uint8_t>& out, std::vector<uint8_t>& scratch,
+                           std::vector<uint8_t>& out, ScaleScratch& scratch,
                            bool force_general) {
     if (!frame.pixels) throw Error("downscale: no frame");
     const int sx = plan.src_x, sy = plan.src_y;
@@ -178,64 +245,81 @@ void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
     const int dw = plan.dst_w, dh = plan.dst_h;
 
     if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) throw Error("downscale: empty region");
-    if (sx < 0 || sy < 0 || sx + sw > frame.width || sy + sh > frame.height) {
+    // Widened so the bounds check cannot be defeated by overflowing its own arithmetic.
+    if (sx < 0 || sy < 0 || static_cast<int64_t>(sx) + sw > frame.width ||
+        static_cast<int64_t>(sy) + sh > frame.height) {
         throw Error("downscale: region outside frame");
     }
+    if (frame.stride < static_cast<int64_t>(frame.width) * 4) {
+        throw Error("downscale: frame stride is narrower than its width");
+    }
 
-    // Per-destination-column source spans, plus a fixed-point reciprocal of each
-    // span so the inner loops multiply-and-shift instead of dividing.
-    std::vector<int32_t> col_start(dw), col_last(dw), col_count(dw);
-    std::vector<uint32_t> col_recip(dw);
-    int max_count = 1;
-    for (int x = 0; x < dw; ++x) {
-        int c0 = static_cast<int>(static_cast<int64_t>(x) * sw / dw);
-        int c1 = static_cast<int>(static_cast<int64_t>(x + 1) * sw / dw);
-        if (c1 <= c0) c1 = c0 + 1;  // upscaling: nearest source pixel
-        if (c1 > sw) c1 = sw;
-        col_start[x] = sx + c0;
-        col_last[x] = sx + c1 - 1;
-        col_count[x] = c1 - c0;
-        col_recip[x] = 65536u / static_cast<uint32_t>(c1 - c0);
-        max_count = (std::max)(max_count, col_count[x]);
+    // Column plan, rebuilt only when the geometry actually changes. A steady stream
+    // of same-sized screenshots therefore allocates nothing and performs no divisions.
+    if (scratch.planned_w != dw || scratch.planned_src_w != sw || scratch.planned_src_x != sx) {
+        scratch.col_start.resize(dw);
+        scratch.col_last.resize(dw);
+        scratch.col_count.resize(dw);
+        scratch.col_recip.resize(dw);
+        int max_count = 1;
+        for (int x = 0; x < dw; ++x) {
+            int c0 = static_cast<int>(static_cast<int64_t>(x) * sw / dw);
+            int c1 = static_cast<int>(static_cast<int64_t>(x + 1) * sw / dw);
+            if (c1 <= c0) c1 = c0 + 1;  // upscaling: nearest source pixel
+            const int count = c1 - c0;
+            scratch.col_start[x] = sx + c0;
+            scratch.col_last[x] = sx + c1 - 1;
+            scratch.col_count[x] = count;
+            scratch.col_recip[x] = reciprocal_for(count);
+            max_count = (std::max)(max_count, count);
+        }
+        scratch.max_count = max_count;
+        scratch.planned_w = dw;
+        scratch.planned_src_w = sw;
+        scratch.planned_src_x = sx;
     }
 
     // Pass 1: horizontal average, BGRA -> BGR, into a dw x sh scratch buffer.
-    // The SIMD kernel spills up to 4 bytes past each row, so carry 16 bytes of slack.
-    const size_t scratch_row = static_cast<size_t>(dw) * 3;
-    scratch.resize(scratch_row * sh + 16);
-    const bool narrow = max_count <= 2 && !force_general;
+    // The SIMD kernels spill up to 4 bytes past each row, so carry 16 bytes of slack.
+    const size_t row_bytes = static_cast<size_t>(dw) * 3;
+    scratch.rows.resize(row_bytes * sh + 16);
+    const bool narrow = scratch.max_count <= 2 && !force_general;
+    const bool identity = narrow && dw == sw;
+
     for (int y = 0; y < sh; ++y) {
         const uint8_t* src_row = frame.pixels + static_cast<size_t>(sy + y) * frame.stride;
-        uint8_t* dst_row = scratch.data() + static_cast<size_t>(y) * scratch_row;
+        uint8_t* dst_row = scratch.rows.data() + static_cast<size_t>(y) * row_bytes;
 
-        if (narrow) {
-            horiz_avg2_avx2(src_row, dst_row, dw, col_start.data(), col_last.data());
+        if (identity) {
+            horiz_pack_avx2(src_row + static_cast<size_t>(sx) * 4, dst_row, dw);
             continue;
         }
-        // General path: reductions of 3 or more source pixels. The inner loop is
-        // long enough here that the compiler vectorizes it on its own.
+        if (narrow) {
+            horiz_avg2_avx2(src_row, dst_row, dw, scratch.col_start.data(),
+                            scratch.col_last.data());
+            continue;
+        }
+        // General path: spans of 3 or more. The inner loop is long enough here that
+        // the compiler vectorizes it on its own.
         for (int x = 0; x < dw; ++x) {
-            const uint8_t* p = src_row + static_cast<size_t>(col_start[x]) * 4;
-            const int n = col_count[x];
+            const uint8_t* p = src_row + static_cast<size_t>(scratch.col_start[x]) * 4;
+            const int n = scratch.col_count[x];
             uint32_t b = 0, g = 0, r = 0;
             for (int i = 0; i < n; ++i, p += 4) {
                 b += p[0];
                 g += p[1];
                 r += p[2];  // p[3] is alpha, discarded
             }
-            const uint32_t recip = col_recip[x];
-            dst_row[x * 3 + 0] = static_cast<uint8_t>((b * recip + 32768u) >> 16);
-            dst_row[x * 3 + 1] = static_cast<uint8_t>((g * recip + 32768u) >> 16);
-            dst_row[x * 3 + 2] = static_cast<uint8_t>((r * recip + 32768u) >> 16);
+            const uint32_t recip = scratch.col_recip[x];
+            uint8_t* d = dst_row + static_cast<size_t>(x) * 3;
+            d[0] = average(b, recip, n);
+            d[1] = average(g, recip, n);
+            d[2] = average(r, recip, n);
         }
     }
 
-    // Pass 2: vertical average over whole rows. The accumulate loop is contiguous
-    // uint8 -> uint32 over dw*3 bytes, which MSVC vectorizes under /arch:AVX2.
-    const size_t row_bytes = static_cast<size_t>(dw) * 3;
+    // Pass 2: vertical average over whole rows. Contiguous, so it vectorizes cleanly.
     out.resize(row_bytes * dh);
-    std::vector<uint32_t> acc(row_bytes);
-
     for (int y = 0; y < dh; ++y) {
         int r0 = static_cast<int>(static_cast<int64_t>(y) * sh / dh);
         int r1 = static_cast<int>(static_cast<int64_t>(y + 1) * sh / dh);
@@ -245,24 +329,23 @@ void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
         uint8_t* dst_row = out.data() + static_cast<size_t>(y) * row_bytes;
 
         if (n == 1) {
-            std::memcpy(dst_row, scratch.data() + static_cast<size_t>(r0) * row_bytes, row_bytes);
+            std::memcpy(dst_row, scratch.rows.data() + static_cast<size_t>(r0) * row_bytes,
+                        row_bytes);
             continue;
         }
         if (n == 2 && !force_general) {  // the 0.5x-1.0x range again, contiguous
-            vert_avg2_avx2(scratch.data() + static_cast<size_t>(r0) * row_bytes,
-                           scratch.data() + static_cast<size_t>(r0 + 1) * row_bytes, dst_row,
-                           row_bytes);
+            vert_avg2_avx2(scratch.rows.data() + static_cast<size_t>(r0) * row_bytes,
+                           scratch.rows.data() + static_cast<size_t>(r0 + 1) * row_bytes,
+                           dst_row, row_bytes);
             continue;
         }
-        std::fill(acc.begin(), acc.end(), 0u);
+        scratch.acc.assign(row_bytes, 0u);
         for (int ry = r0; ry < r1; ++ry) {
-            const uint8_t* s = scratch.data() + static_cast<size_t>(ry) * row_bytes;
-            for (size_t i = 0; i < row_bytes; ++i) acc[i] += s[i];
+            const uint8_t* s = scratch.rows.data() + static_cast<size_t>(ry) * row_bytes;
+            for (size_t i = 0; i < row_bytes; ++i) scratch.acc[i] += s[i];
         }
-        const uint32_t recip = 65536u / static_cast<uint32_t>(n);
-        for (size_t i = 0; i < row_bytes; ++i) {
-            dst_row[i] = static_cast<uint8_t>((acc[i] * recip + 32768u) >> 16);
-        }
+        const uint32_t recip = reciprocal_for(n);
+        for (size_t i = 0; i < row_bytes; ++i) dst_row[i] = average(scratch.acc[i], recip, n);
     }
 }
 

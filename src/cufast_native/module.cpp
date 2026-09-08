@@ -93,7 +93,7 @@ private:
     std::mutex mutex_;
     Capture capture_;
     std::vector<uint8_t> pixels_;
-    std::vector<uint8_t> scratch_;
+    ScaleScratch scratch_;
 };
 
 MouseButton parse_button(const std::string& name) {
@@ -107,6 +107,13 @@ MouseButton parse_button(const std::string& name) {
 
 NB_MODULE(_native, m) {
     m.doc() = "Native Windows capture and input for the cufast computer-use harness.";
+
+    // The whole module is compiled with /arch:AVX2, so a CPU without it would fault
+    // with an illegal instruction rather than raising anything Python could catch.
+    if (!cpu_supports_avx2()) {
+        throw std::runtime_error(
+            "cufast requires a CPU with AVX2 (Intel Haswell / AMD Excavator, 2013 onward)");
+    }
 
     // Must happen before anything measures or clicks a pixel.
     enable_dpi_awareness();
@@ -190,7 +197,8 @@ NB_MODULE(_native, m) {
             plan.dst_w = dst_w;
             plan.dst_h = dst_h;
 
-            std::vector<uint8_t> out, scratch;
+            std::vector<uint8_t> out;
+            ScaleScratch scratch;
             downscale_bgra_to_bgr(frame, plan, out, scratch, force_general);
             return nb::bytes(reinterpret_cast<const char*>(out.data()), out.size());
         },
@@ -203,6 +211,11 @@ NB_MODULE(_native, m) {
             nb::dict d;
             d["index"] = mon.index;
             d["primary"] = mon.is_primary;
+            // Device names are ASCII ("\\\\.\\DISPLAY1"), so a narrowing copy is
+            // safe. Reported because "display 2" in Windows is index 1 here, and
+            // that ambiguity is worth removing.
+            const std::string device(mon.device_name.begin(), mon.device_name.end());
+            d["device"] = nb::str(device.c_str());
             d["x"] = static_cast<int>(mon.rect.left);
             d["y"] = static_cast<int>(mon.rect.top);
             d["width"] = mon.width();
@@ -298,4 +311,5 @@ NB_MODULE(_native, m) {
 
     m.def("set_input_blocked", &set_input_blocked, nb::arg("blocked"));
     m.def("input_blocked", &input_blocked);
+    m.def("dpi_per_monitor_aware", &dpi_per_monitor_aware);
 }

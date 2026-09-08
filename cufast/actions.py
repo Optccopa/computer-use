@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from cufast import _native
 from cufast.session import ActionError, Screenshot, Session
@@ -19,6 +19,13 @@ from cufast.session import ActionError, Screenshot, Session
 NOT_EXECUTED = "Not executed: an earlier computer action in this turn failed."
 
 MAX_DURATION_SECONDS = 300.0
+MAX_SCROLL_AMOUNT = 1000
+
+# Exceptions that represent a failed action rather than a bug in this code. Native
+# failures arrive as RuntimeError through nanobind. TypeError and AttributeError are
+# deliberately NOT caught: those are programming errors, and dressing them up as
+# action results would have the model retry them forever.
+ACTION_FAILURES = (ActionError, RuntimeError, OSError, ValueError)
 
 
 @dataclass
@@ -30,12 +37,18 @@ class ActionResult:
 
 
 # Actions after which the UI needs a moment before the next action is meaningful.
+# mouse_move is included because hovering is its whole purpose: without a settle the
+# screenshot that follows is the pre-hover frame, and the model concludes the tooltip
+# never opened.
 _MUTATING = frozenset(
     {
         "left_click", "right_click", "middle_click", "double_click", "triple_click",
-        "left_click_drag", "left_mouse_down", "left_mouse_up", "scroll", "type", "key",
+        "left_click_drag", "left_mouse_down", "left_mouse_up", "mouse_move", "scroll",
+        "type", "key", "hold_key",
     }
 )
+
+_CAPTURING = frozenset({"screenshot", "zoom"})
 
 _CLICK_BUTTONS = {
     "left_click": ("left", 1),
@@ -67,14 +80,20 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
 
 ACTION_NAMES = tuple(sorted(_ALLOWED_PARAMS))
 
+_SCROLL_DIRECTIONS = frozenset({"up", "down", "left", "right"})
+
 
 def _coordinate(value: Any, field: str) -> tuple[float, float]:
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
         raise ActionError(f"{field} must be [x, y]")
-    try:
-        return float(value[0]), float(value[1])
-    except (TypeError, ValueError):
-        raise ActionError(f"{field} must be two numbers, got {value!r}") from None
+    if len(value) != 2:
+        raise ActionError(f"{field} must be [x, y]")
+    out = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ActionError(f"{field} must be two numbers, got {value!r}")
+        out.append(float(item))
+    return out[0], out[1]
 
 
 def _text(params: dict[str, Any], required: bool = True) -> str:
@@ -88,74 +107,135 @@ def _text(params: dict[str, Any], required: bool = True) -> str:
     return value
 
 
+def _integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ActionError(f"{field} must be an integer, got {value!r}")
+    return value
+
+
 def _duration(params: dict[str, Any]) -> float:
     value = params.get("duration")
     if value is None:
         raise ActionError("duration is required (seconds)")
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        raise ActionError(f"duration must be a number, got {value!r}") from None
-    if seconds < 0 or seconds > MAX_DURATION_SECONDS:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ActionError(f"duration must be a number, got {value!r}")
+    seconds = float(value)
+    if not 0.0 <= seconds <= MAX_DURATION_SECONDS:
         raise ActionError(f"duration must be between 0 and {MAX_DURATION_SECONDS:g} seconds")
     return seconds
 
 
-def _validate(name: str, params: dict[str, Any]) -> None:
+def validate(name: Any, params: dict[str, Any]) -> None:
+    """Checks an action without performing any of it.
+
+    Run over the whole batch before anything executes, so a malformed action at the
+    end cannot leave the first half applied with nothing reported.
+    """
+    if not isinstance(name, str):
+        raise ActionError("each action needs an 'action' field naming the action")
     if name not in _ALLOWED_PARAMS:
-        raise ActionError(
-            f"unknown action {name!r}. Valid actions: {', '.join(ACTION_NAMES)}"
-        )
-    unknown = set(params) - _ALLOWED_PARAMS[name] - {"action"}
+        raise ActionError(f"unknown action {name!r}. Valid actions: {', '.join(ACTION_NAMES)}")
+
+    unknown = set(params) - _ALLOWED_PARAMS[name]
     if unknown:
         allowed = ", ".join(sorted(_ALLOWED_PARAMS[name])) or "(none)"
         raise ActionError(
             f"{name} does not take {', '.join(sorted(unknown))}; it takes: {allowed}"
         )
 
+    if name == "zoom":
+        region = params.get("region")
+        if region is None:
+            raise ActionError("zoom requires region as [x0, y0, x1, y1]")
+        if isinstance(region, (str, bytes)) or not isinstance(region, (list, tuple)):
+            raise ActionError("region must be [x0, y0, x1, y1]")
+        if len(region) != 4:
+            raise ActionError("region must be [x0, y0, x1, y1]")
+        for item in region:
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ActionError(f"region must be four numbers, got {region!r}")
+
+    elif name in _CLICK_BUTTONS or name == "mouse_move":
+        if name == "mouse_move" and params.get("coordinate") is None:
+            raise ActionError("mouse_move requires coordinate")
+        if params.get("coordinate") is not None:
+            _coordinate(params["coordinate"], "coordinate")
+        _text(params, required=False)
+
+    elif name == "left_click_drag":
+        if params.get("start_coordinate") is None or params.get("coordinate") is None:
+            raise ActionError("left_click_drag requires start_coordinate and coordinate")
+        _coordinate(params["start_coordinate"], "start_coordinate")
+        _coordinate(params["coordinate"], "coordinate")
+        _text(params, required=False)
+
+    elif name == "scroll":
+        direction = params.get("scroll_direction")
+        if not isinstance(direction, str) or direction.lower() not in _SCROLL_DIRECTIONS:
+            raise ActionError("scroll requires scroll_direction: up, down, left, or right")
+        if params.get("scroll_amount") is None:
+            raise ActionError("scroll requires scroll_amount (wheel clicks)")
+        clicks = _integer(params["scroll_amount"], "scroll_amount")
+        if clicks < 0:
+            raise ActionError("scroll_amount must not be negative")
+        if clicks > MAX_SCROLL_AMOUNT:
+            raise ActionError(f"scroll_amount must be at most {MAX_SCROLL_AMOUNT}")
+        if params.get("coordinate") is not None:
+            _coordinate(params["coordinate"], "coordinate")
+        _text(params, required=False)
+
+    elif name == "type":
+        _text(params)
+
+    elif name == "key":
+        _text(params)
+        repeat = _integer(params.get("repeat", 1), "repeat")
+        if not 1 <= repeat <= 100:
+            raise ActionError("repeat must be between 1 and 100")
+
+    elif name == "hold_key":
+        _text(params)
+        _duration(params)
+
+    elif name == "wait":
+        _duration(params)
+
 
 def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult:
-    """Runs one action. Raises ActionError with a message meant for the model."""
-    _validate(name, params)
+    """Runs one action. Raises ActionError with a message meant for the model.
+
+    Every parameter is validated before the first native call, so an action can never
+    half-apply -- moving the cursor and then rejecting its own arguments.
+    """
+    validate(name, params)
 
     if name == "screenshot":
         return ActionResult(name, image=session.screenshot())
 
     if name == "zoom":
-        region = params.get("region")
-        if region is None:
-            raise ActionError("zoom requires region as [x0, y0, x1, y1]")
-        if not isinstance(region, (list, tuple)):
-            raise ActionError("region must be [x0, y0, x1, y1]")
-        try:
-            bounds = [float(v) for v in region]
-        except (TypeError, ValueError):
-            raise ActionError(f"region must be four numbers, got {region!r}") from None
-        return ActionResult(name, image=session.zoom(bounds))
+        return ActionResult(name, image=session.zoom([float(v) for v in params["region"]]))
 
     if name in _CLICK_BUTTONS:
         button, clicks = _CLICK_BUTTONS[name]
-        if "coordinate" in params and params["coordinate"] is not None:
+        modifiers = _text(params, required=False)
+        target = None
+        if params.get("coordinate") is not None:
             x, y = _coordinate(params["coordinate"], "coordinate")
-            _native.mouse_move(*session.to_screen(x, y))
-        _native.mouse_click(button, clicks, _text(params, required=False))
+            target = session.to_screen(x, y)  # may raise; nothing has moved yet
+        if target is not None:
+            _native.mouse_move(*target)
+        _native.mouse_click(button, clicks, modifiers)
         return ActionResult(name, text="OK")
 
     if name == "left_click_drag":
-        start = params.get("start_coordinate")
-        end = params.get("coordinate")
-        if start is None or end is None:
-            raise ActionError("left_click_drag requires start_coordinate and coordinate")
-        x0, y0 = _coordinate(start, "start_coordinate")
-        x1, y1 = _coordinate(end, "coordinate")
-        sx0, sy0 = session.to_screen(x0, y0)
-        sx1, sy1 = session.to_screen(x1, y1)
-        _native.mouse_drag(sx0, sy0, sx1, sy1, _text(params, required=False))
+        x0, y0 = _coordinate(params["start_coordinate"], "start_coordinate")
+        x1, y1 = _coordinate(params["coordinate"], "coordinate")
+        start = session.to_screen(x0, y0)
+        end = session.to_screen(x1, y1)
+        _native.mouse_drag(start[0], start[1], end[0], end[1], _text(params, required=False))
         return ActionResult(name, text="OK")
 
     if name == "mouse_move":
-        if params.get("coordinate") is None:
-            raise ActionError("mouse_move requires coordinate")
         x, y = _coordinate(params["coordinate"], "coordinate")
         _native.mouse_move(*session.to_screen(x, y))
         return ActionResult(name, text="OK")
@@ -169,26 +249,26 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         return ActionResult(name, text="OK")
 
     if name == "cursor_position":
-        x, y = session.cursor_in_screenshot_space()
+        x, y, on_display = session.cursor_in_screenshot_space()
+        if not on_display:
+            return ActionResult(
+                name,
+                text=f"X={x}, Y={y} (the cursor is on another display; this is the "
+                f"nearest point on the one being controlled)",
+            )
         return ActionResult(name, text=f"X={x}, Y={y}")
 
     if name == "scroll":
-        direction = params.get("scroll_direction")
-        if not isinstance(direction, str):
-            raise ActionError("scroll requires scroll_direction: up, down, left, or right")
-        amount = params.get("scroll_amount")
-        if amount is None:
-            raise ActionError("scroll requires scroll_amount (wheel clicks)")
-        try:
-            clicks = int(amount)
-        except (TypeError, ValueError):
-            raise ActionError(f"scroll_amount must be an integer, got {amount!r}") from None
-        if clicks < 0:
-            raise ActionError("scroll_amount must not be negative")
+        direction = params["scroll_direction"]
+        clicks = int(params["scroll_amount"])
+        modifiers = _text(params, required=False)
+        target = None
         if params.get("coordinate") is not None:
             x, y = _coordinate(params["coordinate"], "coordinate")
-            _native.mouse_move(*session.to_screen(x, y))
-        _native.mouse_scroll(direction, clicks, _text(params, required=False))
+            target = session.to_screen(x, y)
+        if target is not None:
+            _native.mouse_move(*target)
+        _native.mouse_scroll(direction, clicks, modifiers)
         return ActionResult(name, text="OK")
 
     if name == "type":
@@ -196,14 +276,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         return ActionResult(name, text="OK")
 
     if name == "key":
-        repeat = params.get("repeat", 1)
-        try:
-            times = int(repeat)
-        except (TypeError, ValueError):
-            raise ActionError(f"repeat must be an integer, got {repeat!r}") from None
-        if not 1 <= times <= 100:
-            raise ActionError("repeat must be between 1 and 100")
-        _native.press_key(_text(params), times)
+        _native.press_key(_text(params), int(params.get("repeat", 1)))
         return ActionResult(name, text="OK")
 
     if name == "hold_key":
@@ -234,49 +307,53 @@ def run_batch(
     if not actions:
         raise ActionError("actions must contain at least one action")
 
-    results: list[ActionResult] = []
-    failed_at: int | None = None
-
+    # Validate everything up front. Doing it inside the loop would let a malformed
+    # action at index 1 execute index 0 first and then raise, applying half the batch
+    # while reporting none of it.
     for index, raw in enumerate(actions):
         if not isinstance(raw, dict):
             raise ActionError(f"action {index} must be an object, got {type(raw).__name__}")
         name = raw.get("action")
         if not isinstance(name, str):
             raise ActionError(f"action {index} is missing the required 'action' field")
+        try:
+            validate(name, {k: v for k, v in raw.items() if k != "action"})
+        except ActionError as exc:
+            raise ActionError(f"action {index} ({name}): {exc}") from None
 
-        if failed_at is not None:
+    results: list[ActionResult] = []
+    failed = False
+
+    for index, raw in enumerate(actions):
+        name = raw["action"]
+        if failed:
             results.append(ActionResult(name, text=NOT_EXECUTED, is_error=True))
             continue
 
         params = {k: v for k, v in raw.items() if k != "action"}
         try:
-            result = execute(session, name, params)
-        except ActionError as exc:
+            results.append(execute(session, name, params))
+        except ACTION_FAILURES as exc:
             results.append(ActionResult(name, text=f"Error: {exc}", is_error=True))
-            failed_at = index
-            continue
-        except Exception as exc:  # native layer failures reach the model as text
-            results.append(ActionResult(name, text=f"Error: {exc}", is_error=True))
-            failed_at = index
+            failed = True
             continue
 
-        results.append(result)
-
-        # Let the UI repaint before whatever comes next observes it.
-        if (
-            session.config.settle_ms
-            and name in _MUTATING
-            and index + 1 < len(actions)
-        ):
+        if session.config.settle_ms and name in _MUTATING and index + 1 < len(actions):
             time.sleep(session.config.settle_ms / 1000.0)
 
-    if auto_screenshot and failed_at is None:
-        last = actions[-1].get("action") if isinstance(actions[-1], dict) else None
-        if last not in ("screenshot", "zoom"):
-            # Saves an entire model round trip versus asking for the screenshot in
-            # the next turn, which is the single most common two-call pattern.
-            if session.config.settle_ms and last in _MUTATING:
-                time.sleep(session.config.settle_ms / 1000.0)
+    if auto_screenshot and not failed and actions[-1]["action"] not in _CAPTURING:
+        # Saves an entire model round trip versus asking for the screenshot in the
+        # next turn, which is the single most common two-call pattern.
+        if session.config.settle_ms and actions[-1]["action"] in _MUTATING:
+            time.sleep(session.config.settle_ms / 1000.0)
+        try:
             results.append(ActionResult("screenshot", image=session.screenshot()))
+        except ACTION_FAILURES as exc:
+            # Must not escape: the batch already ran, and losing every result because
+            # the trailing capture failed would leave the model unable to tell what
+            # actually happened. A DXGI device loss here is routine.
+            results.append(
+                ActionResult("screenshot", text=f"Error: {exc}", is_error=True)
+            )
 
     return results

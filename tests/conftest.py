@@ -38,9 +38,17 @@ class FakeScreen:
         self.index = index
         self.using_dxgi = True
         self.calls: list[dict] = []
+        self.raise_on_grab: Exception | None = None
+
+    def resize(self, width, height):
+        """Simulates a display mode change, which the native layer follows."""
+        self.width = width
+        self.height = height
 
     def grab(self, **kwargs):
         self.calls.append(kwargs)
+        if self.raise_on_grab is not None:
+            raise self.raise_on_grab
         rw = kwargs.get("rw", -1)
         rh = kwargs.get("rh", -1)
         src_w = self.width if rw < 0 else rw

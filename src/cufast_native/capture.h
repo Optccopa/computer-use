@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -12,7 +13,7 @@ namespace cufast {
 
 struct MonitorInfo {
     int index = 0;              // stable: primary is always 0
-    std::wstring device_name;   // e.g. L"\\.\DISPLAY1"
+    std::wstring device_name;   // e.g. L"\\\\.\\DISPLAY1"
     RECT rect{};                // virtual-desktop coords; may be negative
     bool is_primary = false;
 
@@ -25,7 +26,7 @@ std::vector<MonitorInfo> enumerate_monitors();
 // Captures one monitor. Prefers DXGI Desktop Duplication (~1-3 ms, keeps the
 // D3D11 device and duplication object warm across calls) and falls back to a
 // GDI BitBlt (~15-30 ms) when duplication is unavailable: secure desktop, an
-// active session switch, or a driver that refuses DuplicateOutput.
+// active session switch, a rotated panel, or a driver that refuses DuplicateOutput.
 //
 // Both paths write into one top-down 32bpp BGRA DIB section so the mouse cursor
 // can be composited with DrawIconEx regardless of which path produced the frame.
@@ -44,16 +45,23 @@ public:
     FrameView grab(bool draw_cursor, int timeout_ms);
 
     const MonitorInfo& monitor() const { return monitor_; }
-    // True if the last grab() came from the DXGI path.
     bool using_dxgi() const { return dxgi_ready_; }
     // Monotonically increasing; unchanged when grab() reused a cached frame.
     uint64_t frame_id() const { return frame_id_; }
 
 private:
+    void release_gdi();
     void init_dib(int width, int height);
-    bool init_dxgi();          // false if duplication is unavailable
+    // Re-resolves this monitor and resizes the surface if the display mode changed.
+    // Without it a resolution change silently produces a cropped frame that still
+    // reports the old dimensions, which maps every later click to the wrong place.
+    void ensure_geometry();
+
+    bool init_dxgi();
     void teardown_dxgi();
+    void maybe_retry_dxgi();
     bool grab_dxgi(int timeout_ms);  // true if a new frame landed in the DIB
+    void release_held_frame();
     void grab_gdi();
     void draw_cursor_into_dib();
     void restore_under_cursor();
@@ -69,6 +77,10 @@ private:
     int height_ = 0;
     int stride_ = 0;
 
+    // Cheap guard against display reconfiguration, checked per grab.
+    int seen_monitor_count_ = 0;
+    RECT seen_virtual_rect_{};
+
     // Saved pixels under the last composited cursor, so a reused frame can be
     // un-drawn without re-copying the whole surface.
     std::vector<uint8_t> cursor_backup_;
@@ -81,9 +93,17 @@ private:
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGIOutputDuplication> dupl_;
     ComPtr<ID3D11Texture2D> staging_;
-    bool holding_frame_ = false;  // AcquireNextFrame outstanding
+    // The docs recommend holding the frame until just before the next acquire:
+    // while the client does not own it, the OS copies every desktop update into
+    // the surface, which is wasted GPU work across the seconds an agent spends
+    // thinking between screenshots.
+    bool holding_frame_ = false;
+    std::chrono::steady_clock::time_point next_dxgi_retry_{};
 
     bool have_frame_ = false;
+    // Set when duplication was re-established, so the next grab reseeds from GDI
+    // rather than handing back the frame from before the disruption.
+    bool needs_reseed_ = false;
     uint64_t frame_id_ = 0;
 };
 

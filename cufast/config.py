@@ -38,11 +38,22 @@ def _env_float(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number, got {raw!r}") from exc
 
 
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off"})
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None or not raw.strip():
         return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
+    value = raw.strip().lower()
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    # Every other CUFAST_* variable reports a typo; silently reading "tru" as false
+    # would quietly disable the cursor overlay with no way to notice.
+    raise ValueError(f"{name} must be true or false, got {raw!r}")
 
 
 @dataclass(frozen=True)
@@ -62,6 +73,12 @@ class Config:
     # batch, giving the UI a chance to repaint. Overridden per call by wait actions.
     settle_ms: int = 40
 
+    def __post_init__(self) -> None:
+        # Validating here rather than only in from_env() matters: build_server()
+        # accepts a caller-supplied Config, and an unvalidated one reaches the native
+        # layer and desynchronises coordinates with no error anywhere.
+        self.validate()
+
     @classmethod
     def from_env(cls) -> Config:
         cfg = cls(
@@ -73,7 +90,6 @@ class Config:
             capture_timeout_ms=_env_int("CUFAST_CAPTURE_TIMEOUT_MS", 16),
             settle_ms=_env_int("CUFAST_SETTLE_MS", 40),
         )
-        cfg.validate()
         return cfg
 
     def validate(self) -> None:

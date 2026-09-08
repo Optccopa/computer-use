@@ -113,14 +113,15 @@ class TestCoordinateGuards:
 class TestCursorReporting:
     def test_reports_in_screenshot_space(self, session, fake_input):
         fake_input.cursor = (960, 540)
-        assert session.cursor_in_screenshot_space() == (512, 288)
+        assert session.cursor_in_screenshot_space() == (512, 288, True)
 
     def test_subtracts_monitor_origin(self, monkeypatch, fake_input):
         screen = FakeScreen(width=1920, height=1080, origin_x=-1920, origin_y=0)
         session = make_session(monkeypatch, screen)
         fake_input.cursor = (-960, 540)
-        x, y = session.cursor_in_screenshot_space()
+        x, y, on_display = session.cursor_in_screenshot_space()
         assert (x, y) == (512, 288)
+        assert on_display
 
 
 class TestZoom:

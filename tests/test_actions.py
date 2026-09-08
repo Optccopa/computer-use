@@ -167,11 +167,13 @@ class TestBatch:
         assert len(results) == 1
 
     def test_stops_at_first_failure(self, session, fake_input):
+        # An out-of-frame coordinate is only detectable at execution time, unlike a
+        # malformed parameter, so it is what exercises the mid-batch failure path.
         results = run_batch(
             session,
             [
                 {"action": "left_click", "coordinate": [10, 10]},
-                {"action": "key", "text": "ctrl+s", "repeat": 999},
+                {"action": "left_click", "coordinate": [5000, 10]},
                 {"action": "type", "text": "never runs"},
             ],
             auto_screenshot=False,
@@ -184,9 +186,21 @@ class TestBatch:
         assert "type_text" not in fake_input.names()
 
     def test_no_screenshot_is_appended_after_a_failure(self, session):
-        results = run_batch(session, [{"action": "nonsense"}])
+        results = run_batch(session, [{"action": "left_click", "coordinate": [5000, 5000]}])
         assert len(results) == 1
         assert results[0].is_error
+
+    def test_unknown_action_is_rejected_before_anything_runs(self, session, fake_input):
+        with pytest.raises(ActionError, match="unknown action"):
+            run_batch(session, [{"action": "type", "text": "x"}, {"action": "nonsense"}])
+        # Nothing may have been typed: a malformed entry at the end must not leave
+        # the first half of the batch applied with none of it reported.
+        assert fake_input.events == []
+
+    def test_malformed_later_entry_does_not_half_apply(self, session, fake_input):
+        with pytest.raises(ActionError):
+            run_batch(session, [{"action": "type", "text": "secret"}, {"nope": 1}])
+        assert fake_input.events == []
 
     def test_out_of_range_click_fails_the_batch(self, session, fake_input):
         results = run_batch(
