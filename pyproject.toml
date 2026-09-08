@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.4"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cufast"
+version = "0.1.0"
+description = "Fast Windows computer-use agent harness (C++ core + MCP server)"
+requires-python = ">=3.14"
+dependencies = ["mcp>=1.2"]
+
+[project.scripts]
+cufast-mcp = "cufast.server:main"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["cufast"]
+cmake.version = ">=3.26"
+cmake.build-type = "Release"

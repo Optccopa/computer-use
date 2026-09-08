@@ -1,0 +1,49 @@
+# Build output
+/build/
+/dist/
+/wheelhouse/
+*.pyd
+*.dll
+*.lib
+*.exp
+*.obj
+*.pdb
+*.ilk
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.sln
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+/.venv/
+/venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# uv
+uv.lock
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# Scratch: screenshots and captures produced while testing the harness.
+# These are pictures of the developer's actual desktop -- never commit them.
+/scratch/
+/captures/
+*.jpg
+*.jpeg
+*.png
+*.bmp
