@@ -280,11 +280,20 @@ public:
         buttons_.push_back(up_flag);
     }
 
-    // Queues the releases in reverse order and stops tracking them, for the path
-    // where everything succeeded and the releases travel in the normal batch.
+    // Queues the releases in reverse order. Deliberately keeps tracking them:
+    // send() clears the batch and throws when SendInput accepts only a prefix, and
+    // at that point some of these releases were delivered and some were not.
+    // Clearing here disarmed the destructor exactly when it was needed -- a drag
+    // whose release was partially accepted left the left button physically down,
+    // which is the failure this class exists to prevent. Callers disarm() only once
+    // send() has returned.
     void release_into(std::vector<INPUT>& batch) {
         for (auto it = buttons_.rbegin(); it != buttons_.rend(); ++it) push_mouse(batch, *it);
         for (auto it = keys_.rbegin(); it != keys_.rend(); ++it) push_key(batch, *it, true);
+    }
+
+    // The releases are known delivered, so the destructor has nothing left to do.
+    void disarm() {
         buttons_.clear();
         keys_.clear();
     }
@@ -408,6 +417,10 @@ void release_held_input() noexcept {
         {VK_MBUTTON, MOUSEEVENTF_MIDDLEUP},
     };
 
+    // Held for the whole call, the send included, so a key_down cannot slip its
+    // injection in after the registry was drained.
+    std::lock_guard<std::mutex> lock(g_held_mutex);
+
     std::vector<INPUT> batch;
     // Buttons first: a drag that ends with the modifier already gone is a plain
     // drag, whereas releasing the modifier last can turn it into a shift-drag.
@@ -417,15 +430,12 @@ void release_held_input() noexcept {
 
     // Then everything key_down is holding. These are not modifiers and so are not
     // in the table above -- a latched W is what walks the player into a wall.
-    {
-        std::lock_guard<std::mutex> lock(g_held_mutex);
-        for (auto entry = g_held.rbegin(); entry != g_held.rend(); ++entry) {
-            for (auto vk = entry->second.rbegin(); vk != entry->second.rend(); ++vk) {
-                push_key(batch, *vk, true);
-            }
+    for (auto entry = g_held.rbegin(); entry != g_held.rend(); ++entry) {
+        for (auto vk = entry->second.rbegin(); vk != entry->second.rend(); ++vk) {
+            push_key(batch, *vk, true);
         }
-        g_held.clear();
     }
+    g_held.clear();
 
     for (const auto& k : kKeys) {
         if (GetAsyncKeyState(k.vk) & 0x8000) push_key(batch, k.release, true);
@@ -505,6 +515,7 @@ void mouse_click(MouseButton button, int clicks, const std::string& modifiers) {
     }
     guard.release_into(batch);
     send(batch);
+    guard.disarm();
 }
 
 void mouse_down(MouseButton button) {
@@ -552,6 +563,7 @@ void mouse_drag(int x0, int y0, int x1, int y1, const std::string& modifiers) {
 
     guard.release_into(batch);
     send(batch);
+    guard.disarm();
 }
 
 void mouse_scroll(const std::string& direction, int amount, const std::string& modifiers) {
@@ -587,6 +599,7 @@ void mouse_scroll(const std::string& direction, int amount, const std::string& m
     push_mouse(batch, flags, delta);
     guard.release_into(batch);
     send(batch);
+    guard.disarm();
 }
 
 void type_text(const std::string& utf8) {
@@ -628,6 +641,11 @@ void type_text(const std::string& utf8) {
     send(batch);
 }
 
+void validate_chord(const std::string& chord) {
+    if (chord.empty()) return;
+    (void)chord_vks(chord);
+}
+
 void press_key(const std::string& chord, int repeat) {
     check_allowed();
     if (repeat < 1) repeat = 1;
@@ -659,6 +677,7 @@ void press_key(const std::string& chord, int repeat) {
 
     guard.release_into(batch);
     send(batch);
+    guard.disarm();
 }
 
 void mouse_move_relative(int dx, int dy, int steps) {
@@ -712,12 +731,15 @@ void key_down(const std::string& chord) {
     // fails, those keys are down; a registry written afterwards would not know
     // about them and nothing would ever release them. Recording a key that never
     // went down is harmless -- releasing an unpressed key is a no-op.
-    {
-        std::lock_guard<std::mutex> lock(g_held_mutex);
-        auto it = std::find_if(g_held.begin(), g_held.end(),
-                               [&chord](const auto& e) { return e.first == chord; });
-        if (it == g_held.end()) g_held.emplace_back(chord, vks);
-    }
+    // Registry write and injection under one lock, and release_held_input takes the
+    // same lock across its own send. Otherwise the kill switch could fire between
+    // the two: the releaser drains the registry and injects W-up, then this call
+    // injects W-down into a desktop whose stop button has already fired, and nothing
+    // is left that would ever release it.
+    std::lock_guard<std::mutex> lock(g_held_mutex);
+    auto it = std::find_if(g_held.begin(), g_held.end(),
+                           [&chord](const auto& e) { return e.first == chord; });
+    if (it == g_held.end()) g_held.emplace_back(chord, vks);
 
     std::vector<INPUT> batch;
     for (WORD vk : vks) push_key(batch, vk, false);
@@ -727,22 +749,24 @@ void key_down(const std::string& chord) {
 void key_up(const std::string& chord) {
     // Deliberately not gated on the kill switch, for the same reason mouse_up is
     // not: the recovery path must never be the thing that is blocked.
+    // Resolved before the lock: chord_vks calls into the keyboard layout, which is
+    // not something to do while holding a mutex the hook path also wants.
+    const std::vector<WORD> resolved = chord_vks(chord);
+
+    std::lock_guard<std::mutex> lock(g_held_mutex);
     std::vector<WORD> vks;
-    {
-        std::lock_guard<std::mutex> lock(g_held_mutex);
-        auto it = std::find_if(g_held.begin(), g_held.end(),
-                               [&chord](const auto& e) { return e.first == chord; });
-        if (it != g_held.end()) {
-            vks = it->second;
-            g_held.erase(it);
-        }
+    auto it = std::find_if(g_held.begin(), g_held.end(),
+                           [&chord](const auto& e) { return e.first == chord; });
+    if (it != g_held.end()) {
+        vks = it->second;
+        g_held.erase(it);
     }
-    // Falling back to resolving the chord covers a release for something this
-    // process did not press -- a key left down by a previous run, say.
-    if (vks.empty()) vks = chord_vks(chord);
+    // Falling back to the resolved chord covers a release for something this process
+    // did not press -- a key left down by a previous run, say.
+    if (vks.empty()) vks = resolved;
 
     std::vector<INPUT> batch;
-    for (auto it = vks.rbegin(); it != vks.rend(); ++it) push_key(batch, *it, true);
+    for (auto vk = vks.rbegin(); vk != vks.rend(); ++vk) push_key(batch, *vk, true);
     send_release(batch);
 }
 

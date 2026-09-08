@@ -25,6 +25,28 @@ AIM_MIN_SHIFT_PX = 3
 # A ratio outside this says the measurement is wrong rather than the sensitivity
 # unusual: one native pixel of mouse cannot pan the view by twenty.
 AIM_RATIO_BOUNDS = (0.02, 200.0)
+# The native side rejects anything past this, and beyond it the value stops being a
+# mouse movement and starts being a way to crash the binding: a delta over 2^31 came
+# back as a nanobind TypeError that nothing caught, which destroyed the whole batch
+# result including any screenshot already in it.
+MAX_NATIVE_DELTA = 100_000
+
+
+def _finite_delta(value: float, what: str) -> int:
+    """Rounds to an int the native layer will accept, or says why it will not.
+
+    Rounds half away from zero rather than to even: a calibrated turn is issued over
+    and over, and banker's rounding would send exact halves alternately up and down.
+    """
+    if not math.isfinite(value):
+        raise ActionError(f"{what} came out as {value}, which is not a movement")
+    if abs(value) > MAX_NATIVE_DELTA:
+        raise ActionError(
+            f"{what} came out as {value:.0f} native pixels, past the {MAX_NATIVE_DELTA} "
+            "limit. Either the value asked for is far too large, or the calibration "
+            "is wrong -- recalibrate rather than repeating this."
+        )
+    return int(math.copysign(math.floor(abs(value) + 0.5), value))
 
 
 # Kept here rather than imported from cufast.actions, which imports this module.
@@ -193,11 +215,7 @@ class Session:
                 raise ActionError(f"{name} must be a finite number, got {value!r}")
 
         def scaled(value: float, native: int, ref: int) -> int:
-            exact = value * native / ref
-            # floor(|x| + 0.5), not Python's round(): banker's rounding would send
-            # exactly-half deltas alternately up and down, which is the opposite of
-            # the reproducibility a calibration needs.
-            out = int(math.copysign(math.floor(abs(exact) + 0.5), exact))
+            out = _finite_delta(value * native / ref, "the movement")
             if out == 0 and value != 0:
                 out = 1 if value > 0 else -1
             return out
@@ -245,15 +263,15 @@ class Session:
         dx = (yaw_deg / yaw_dpp) * self.screen.width / ref_w
         dy = (pitch_deg / pitch_dpp) * self.screen.height / ref_h
 
-        def to_int(value: float, degrees: float) -> int:
-            out = int(math.copysign(math.floor(abs(value) + 0.5), value))
+        def to_int(value: float, degrees: float, axis: str) -> int:
+            out = _finite_delta(value, f"the {axis} turn")
             if out == 0 and degrees != 0:
                 out = 1 if degrees > 0 else -1
             return out
 
-        return to_int(dx, yaw_deg), to_int(dy, pitch_deg)
+        return to_int(dx, yaw_deg, "yaw"), to_int(dy, pitch_deg, "pitch")
 
-    def _measure_pan(self, probe_native: int) -> tuple[int, float]:
+    def _measure_pan(self, probe_native: int) -> tuple[int, float, int]:
         """Turn by a known amount and measure how far the image moved.
 
         Uses profiles rather than screenshots: the JPEG encode is most of the cost of
@@ -267,8 +285,9 @@ class Session:
         # measured, and settle_ms is allowed to be 0 in tests.
         time.sleep(max(cfg.settle_ms, 50) / 1000.0)
         after = self.screen.profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
-        shift, confidence = _native.best_shift(before, after, max(min(ref_w // 2, 400), 1))
-        return shift, confidence
+        window = max(min(ref_w // 2, 400), 1)
+        shift, confidence = _native.best_shift(before, after, window)
+        return shift, confidence, window
 
     def autocalibrate_aim(self) -> int:
         """Works out the aim ratio by experiment. Returns native pixels already turned.
@@ -283,19 +302,46 @@ class Session:
         then makes; that is why the amount turned is returned rather than hidden.
         """
         turned = 0
-        for probe in (AIM_PROBE_NATIVE_PX, AIM_PROBE_RETRY_PX):
-            shift, confidence = self._measure_pan(probe)
-            turned += probe
-            if confidence < AIM_MIN_CONFIDENCE or abs(shift) < AIM_MIN_SHIFT_PX:
-                continue
-            ratio = probe / abs(shift)
-            if not AIM_RATIO_BOUNDS[0] <= ratio <= AIM_RATIO_BOUNDS[1]:
-                continue
-            self.set_aim_ratio(ratio)
-            return turned
-
-        # Turn back, so a failed calibration leaves the view where it was found.
-        _native.mouse_move_relative(-turned, 0, 1)
+        probe = AIM_PROBE_NATIVE_PX
+        committed = False
+        try:
+            for _ in range(3):
+                # Counted BEFORE the measurement, not after. _measure_pan moves the
+                # mouse and then captures, so a capture that throws -- a DXGI device
+                # loss is routine -- left the probe applied and unrecorded, and the
+                # restore below had nothing to undo.
+                turned += probe
+                shift, confidence, window = self._measure_pan(probe)
+                if confidence >= AIM_MIN_CONFIDENCE and abs(shift) >= AIM_MIN_SHIFT_PX:
+                    if abs(shift) >= window - 1:
+                        # Pinned at the edge of the search range, so the true peak is
+                        # outside it. That is a lower bound on the movement, not a
+                        # measurement of it, and accepting it would bake a wrong ratio
+                        # in permanently. A large shift means a HIGH sensitivity, so
+                        # the retry probes less, not more.
+                        probe = max(AIM_MIN_SHIFT_PX, probe // 5)
+                        continue
+                    # Negative because the image moves opposite to the camera. Keeping
+                    # the sign rather than the magnitude is what lets an inverted-axis
+                    # setup calibrate to a negative ratio and aim the right way,
+                    # instead of confidently aiming away from the target every time.
+                    ratio = -probe / shift
+                    if AIM_RATIO_BOUNDS[0] <= abs(ratio) <= AIM_RATIO_BOUNDS[1]:
+                        self.set_aim_ratio(ratio)
+                        committed = True
+                        return turned
+                # Too little movement means a low sensitivity, so probe further.
+                probe = AIM_PROBE_RETRY_PX
+        finally:
+            # Whatever happened -- a capture failure mid-probe, the kill switch, a
+            # measurement that could not be trusted -- the view must not be left
+            # rotated by a probe the caller never asked for. On success the caller
+            # subtracts `turned` from its own turn instead, so it is kept.
+            if not committed and turned:
+                try:
+                    _native.mouse_move_relative(-turned, 0, 1)
+                except Exception:  # noqa: BLE001 - best effort; the real error wins
+                    pass
         raise ActionError(
             "could not work out how the mouse maps to the view: turning the camera "
             f"{turned} pixels did not move the image measurably. This happens when "
@@ -305,11 +351,28 @@ class Session:
             "with calibrate."
         )
 
+    def check_in_frame(self, x: float, y: float) -> None:
+        """Rejects a coordinate that is not on the screenshot, moving nothing.
+
+        Separate from aim_delta because aim calibrates before it maps, and
+        calibrating turns the view: a bad coordinate used to leave the camera
+        rotated by the probe and then blame the coordinate, with nothing undoing it.
+        """
+        ref_w, ref_h = self._refresh_reference()
+        self._check_axis(x, ref_w, "x")
+        self._check_axis(y, ref_h, "y")
+
     def set_aim_ratio(self, ratio: float) -> None:
         if isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
             raise ActionError("aim_ratio must be a number")
-        if not math.isfinite(ratio) or ratio <= 0:
-            raise ActionError("aim_ratio must be positive and finite")
+        if not math.isfinite(ratio) or ratio == 0:
+            raise ActionError("aim_ratio must be a non-zero finite number")
+        if not AIM_RATIO_BOUNDS[0] <= abs(ratio) <= AIM_RATIO_BOUNDS[1]:
+            raise ActionError(
+                f"aim_ratio {ratio} is outside the plausible range "
+                f"{AIM_RATIO_BOUNDS[0]}..{AIM_RATIO_BOUNDS[1]}; one mouse pixel cannot "
+                "pan the view by that much"
+            )
         self.aim_ratio = float(ratio)
 
     def aim_delta(self, x: float, y: float) -> tuple[int, int]:
@@ -335,10 +398,8 @@ class Session:
         offset_x = x - ref_w / 2.0
         offset_y = y - ref_h / 2.0
 
-        def to_int(value: float) -> int:
-            return int(math.copysign(math.floor(abs(value) + 0.5), value))
-
-        return to_int(offset_x * self.aim_ratio), to_int(offset_y * self.aim_ratio)
+        return (_finite_delta(offset_x * self.aim_ratio, "the horizontal turn"),
+                _finite_delta(offset_y * self.aim_ratio, "the vertical turn"))
 
     def cursor_in_screenshot_space(self) -> tuple[int, int, bool]:
         """Cursor position in the frame the model reasons about.
@@ -353,8 +414,13 @@ class Session:
         ly = sy - self.screen.origin_y
         on_display = 0 <= lx < self.screen.width and 0 <= ly < self.screen.height
 
-        x = math.floor(lx * ref_w / self.screen.width)
-        y = math.floor(ly * ref_h / self.screen.height)
+        # The exact inverse of _span, not a rescale. Screenshot pixel x covers native
+        # columns [x*W//ref, (x+1)*W//ref), so the pixel containing column lx is the
+        # largest x with x*W//ref <= lx. A plain rescale is off by one on roughly half
+        # of all columns, always low, and to_local goes to real trouble to keep a
+        # coordinate inside its own span -- this has to agree with it.
+        x = ((lx + 1) * ref_w + self.screen.width - 1) // self.screen.width - 1
+        y = ((ly + 1) * ref_h + self.screen.height - 1) // self.screen.height - 1
         return (
             min(max(x, 0), ref_w - 1),
             min(max(y, 0), ref_h - 1),

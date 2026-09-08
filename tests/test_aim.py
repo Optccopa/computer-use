@@ -99,10 +99,18 @@ class TestCalibrationIsRequired:
         with pytest.raises(ActionError, match="calibrate"):
             session.aim_delta(100, 100)
 
-    @pytest.mark.parametrize("bad", [0, -1, float("inf"), float("nan")])
+    @pytest.mark.parametrize("bad", [0, float("inf"), float("nan"), 1e6, 0.0001])
     def test_rejects_a_nonsense_ratio(self, session, bad):
         with pytest.raises(ActionError):
             session.set_aim_ratio(bad)
+
+    def test_a_negative_ratio_is_an_inverted_axis_not_an_error(self, session):
+        # A game with the horizontal axis inverted moves the image the same way the
+        # mouse went. Rejecting that sign would leave such a setup aiming away from
+        # the target on every single call.
+        session.set_aim_ratio(-2.0)
+        dx, _ = session.aim_delta(712, 288)
+        assert dx == -400
 
     def test_catches_a_reciprocal(self, session):
         # Degrees per pixel and pixels per degree are easy to swap, and swapping

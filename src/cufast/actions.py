@@ -55,7 +55,15 @@ MAX_SCROLL_AMOUNT = 1000
 # failures arrive as RuntimeError through nanobind. TypeError and AttributeError are
 # deliberately NOT caught: those are programming errors, and dressing them up as
 # action results would have the model retry them forever.
-ACTION_FAILURES = (ActionError, RuntimeError, OSError, ValueError)
+# OverflowError joins them because it is produced by arithmetic on model-supplied
+# numbers (dx=1e308), not by a bug here, and letting it escape destroyed the entire
+# batch result including screenshots that had already succeeded.
+ACTION_FAILURES = (ActionError, RuntimeError, OSError, ValueError, OverflowError)
+
+# One action is capped at MAX_DURATION_SECONDS, but the batch length was not, so
+# 200 waits of 300s could occupy the single native worker for sixteen hours with no
+# way to report it -- screen_info is dispatched onto the same worker.
+MAX_BATCH_DURATION_SECONDS = 600.0
 
 
 @dataclass
@@ -331,6 +339,9 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
     if name in _CLICK_BUTTONS:
         button, clicks = _CLICK_BUTTONS[name]
         modifiers = _text(params, required=False)
+        # Resolved before the move. "ctrl+zzz" used to move the cursor and only then
+        # fail, leaving a hover applied and the batch halted with no screenshot.
+        _native.validate_chord(modifiers)
         target = None
         if params.get("coordinate") is not None:
             x, y = _coordinate(params["coordinate"], "coordinate")
@@ -360,6 +371,9 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
 
     if name == "aim":
         x, y = _coordinate(params["coordinate"], "coordinate")
+        # Before the probe, which moves the view: rejecting the coordinate afterwards
+        # left the camera rotated and then blamed the coordinate.
+        session.check_in_frame(x, y)
         # Calibrating here rather than making the model do it first is the whole
         # point: a primitive with a setup step does not get used.
         note = ""
@@ -430,6 +444,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         direction = params["scroll_direction"]
         clicks = int(params["scroll_amount"])
         modifiers = _text(params, required=False)
+        _native.validate_chord(modifiers)
         target = None
         if params.get("coordinate") is not None:
             x, y = _coordinate(params["coordinate"], "coordinate")
@@ -506,6 +521,19 @@ def run_batch(
             validate(name, {k: v for k, v in raw.items() if k != "action"})
         except ActionError as exc:
             raise ActionError(f"action {index} ({name}): {exc}") from None
+
+    total_wait = sum(
+        float(raw.get("duration", 0) or 0)
+        for raw in actions
+        if canonical(raw.get("action")) in ("wait", "wait_for_change", "hold_key")
+    )
+    if total_wait > MAX_BATCH_DURATION_SECONDS:
+        raise ActionError(
+            f"this batch would spend {total_wait:g}s waiting, over the "
+            f"{MAX_BATCH_DURATION_SECONDS:g}s limit for one call. The harness runs one "
+            "batch at a time, so nothing else -- including screen_info -- can run "
+            "while it waits. Split it up."
+        )
 
     results: list[ActionResult] = []
     failed = False

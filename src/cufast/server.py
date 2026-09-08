@@ -242,11 +242,20 @@ class Harness:
         return await self._call(work)
 
     def shutdown(self) -> None:
-        self._executor.shutdown(wait=False)
+        # Order matters. Blocking input first makes any batch still running abort at
+        # its next action or wait slice -- waits are sliced precisely so this works.
+        # Tearing the hook down first instead meant a 300s wait could never be
+        # interrupted, ran to completion, and then pressed a key AFTER the release
+        # had already happened, leaving it held with no stop button left.
+        _native.set_input_blocked(True)
+        # wait=True so the worker is finished before its keys are released; it does
+        # not add delay, because blocking input is what ends the batch.
+        self._executor.shutdown(wait=True)
         _native.stop_kill_switch()
         # Anything key_down left holding outlives this process otherwise: the OS has
         # no idea the key belonged to us, so it stays down until someone taps it.
         _native.release_held_input()
+        _native.set_input_blocked(False)
 
 
 def build_server(config: Config | None = None) -> MCPServer:

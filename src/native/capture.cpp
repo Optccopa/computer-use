@@ -384,6 +384,12 @@ void Capture::grab_gdi() {
                      monitor_.rect.top, SRCCOPY | CAPTUREBLT);
     ReleaseDC(nullptr, screen);
     if (!ok) throw Error("BitBlt failed");
+    // CreateDIBSection requires this before the bits are read through the pointer.
+    // The flush at the top of grab() covers the PREVIOUS call's GDI work, not this
+    // BitBlt, so without it the cursor backup -- and, when draw_cursor is off, which
+    // is what profile/sample_hash/wait_for_change all use, the downscale itself --
+    // can read the previous frame.
+    GdiFlush();
 }
 
 void Capture::restore_under_cursor() {

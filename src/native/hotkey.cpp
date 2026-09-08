@@ -1,6 +1,7 @@
 #include "hotkey.hpp"
 
 #include <atomic>
+#include <condition_variable>
 #include <future>
 #include <mutex>
 #include <string>
@@ -12,8 +13,23 @@ namespace cufast {
 namespace {
 
 std::mutex g_lifecycle;
-std::thread g_thread;
+// Heap-allocated and never destroyed. A namespace-scope std::thread that is still
+// joinable at static destruction calls std::terminate, so an embedder that armed the
+// switch and never stopped it would abort on the way out. Joining from a static
+// destructor is not an alternative: that runs under the loader lock.
+std::thread* g_thread = nullptr;
 std::atomic<DWORD> g_thread_id{0};
+
+// Releasing held input means calling SendInput, and every event it injects has to be
+// dispatched through our own low-level hook -- which only happens while the hook's
+// thread is pumping. Doing it on that thread blocks it inside the call that generates
+// the events it must handle, the raw input thread waits out LowLevelHooksTimeout, and
+// Windows silently uninstalls the hook. So it gets its own thread.
+std::thread* g_releaser = nullptr;
+std::mutex g_release_mutex;
+std::condition_variable g_release_cv;
+bool g_release_wanted = false;
+bool g_release_quit = false;
 std::atomic<uint64_t> g_trips{0};
 
 // Set when a Ctrl+Esc key-down is swallowed, so the matching key-up is swallowed
@@ -37,8 +53,13 @@ void toggle_and_notify() {
     // Not released here: this runs on the input path of every keystroke on the
     // desktop, and Windows silently uninstalls a hook that overruns
     // LowLevelHooksTimeout (250 ms by default).
-    if (tid != 0) PostThreadMessageW(tid, WM_CUFAST_ENGAGED, 0, 0);
-    else release_held_input();  // no pump running, so do it inline
+    // A failed post -- thread queue full, or the pump already exiting -- would engage
+    // the switch without unlatching anything, so fall back rather than drop it.
+    if (tid == 0 || !PostThreadMessageW(tid, WM_CUFAST_ENGAGED, 0, 0)) {
+        std::lock_guard<std::mutex> lock(g_release_mutex);
+        g_release_wanted = true;
+        g_release_cv.notify_one();
+    }
 }
 
 LRESULT CALLBACK ll_keyboard(int code, WPARAM wparam, LPARAM lparam) {
@@ -54,8 +75,16 @@ LRESULT CALLBACK ll_keyboard(int code, WPARAM wparam, LPARAM lparam) {
         // something the thing being stopped can press.
         const bool injected = (ev->flags & LLKHF_INJECTED) != 0;
         if (!injected && down && (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) {
-            toggle_and_notify();
-            g_swallow_next_up.store(true, std::memory_order_relaxed);
+            // Hardware auto-repeat arrives as ordinary key-downs and KBDLLHOOKSTRUCT
+            // carries no repeat count, so a held chord is indistinguishable from a
+            // burst of fresh presses. Leaning on it for a second delivers about
+            // sixteen, and toggling on each made whether the agent ended up stopped
+            // the parity of how long the user held the key -- a coin flip on the one
+            // control that exists to stop it. The first down of a press wins; the
+            // rest are swallowed until the matching up clears the latch.
+            if (!g_swallow_next_up.exchange(true, std::memory_order_relaxed)) {
+                toggle_and_notify();
+            }
             return 1;
         }
         if (!injected && !down && g_swallow_next_up.exchange(false, std::memory_order_relaxed)) {
@@ -63,6 +92,20 @@ LRESULT CALLBACK ll_keyboard(int code, WPARAM wparam, LPARAM lparam) {
         }
     }
     return CallNextHookEx(nullptr, code, wparam, lparam);
+}
+
+void releaser_main() {
+    while (true) {
+        bool work = false;
+        {
+            std::unique_lock<std::mutex> lock(g_release_mutex);
+            g_release_cv.wait(lock, [] { return g_release_wanted || g_release_quit; });
+            if (g_release_quit && !g_release_wanted) return;
+            work = g_release_wanted;
+            g_release_wanted = false;
+        }
+        if (work) release_held_input();
+    }
 }
 
 void hook_thread_main(std::promise<std::string> ready) {
@@ -88,7 +131,12 @@ void hook_thread_main(std::promise<std::string> ready) {
             // The point of the stop button is that the desktop is usable afterwards.
             // If the agent was mid-drag or holding a modifier when it was pressed,
             // leaving those latched hands back a machine that cannot be driven.
-            release_held_input();
+            // Handed to the releaser thread rather than done here -- see above.
+            {
+                std::lock_guard<std::mutex> lock(g_release_mutex);
+                g_release_wanted = true;
+            }
+            g_release_cv.notify_one();
             continue;
         }
         TranslateMessage(&msg);
@@ -105,27 +153,53 @@ void trip_kill_switch_for_test() { toggle_and_notify(); }
 
 void start_kill_switch() {
     std::lock_guard<std::mutex> lock(g_lifecycle);
-    if (g_thread.joinable()) return;
+    if (g_thread != nullptr) return;
+
+    {
+        std::lock_guard<std::mutex> rlock(g_release_mutex);
+        g_release_quit = false;
+        g_release_wanted = false;
+    }
+    g_releaser = new std::thread(releaser_main);
 
     std::promise<std::string> ready;
     auto future = ready.get_future();
-    g_thread = std::thread(hook_thread_main, std::move(ready));
+    g_thread = new std::thread(hook_thread_main, std::move(ready));
 
     const std::string error = future.get();
     if (!error.empty()) {
-        g_thread.join();
-        g_thread = {};
+        g_thread->join();
+        delete g_thread;
+        g_thread = nullptr;
+        {
+            std::lock_guard<std::mutex> rlock(g_release_mutex);
+            g_release_quit = true;
+        }
+        g_release_cv.notify_one();
+        g_releaser->join();
+        delete g_releaser;
+        g_releaser = nullptr;
         throw Error("kill switch could not be installed: " + error);
     }
 }
 
 void stop_kill_switch() {
     std::lock_guard<std::mutex> lock(g_lifecycle);
-    if (!g_thread.joinable()) return;
+    if (g_thread == nullptr) return;
     const DWORD tid = g_thread_id.load(std::memory_order_relaxed);
     if (tid != 0) PostThreadMessageW(tid, WM_QUIT, 0, 0);
-    g_thread.join();
-    g_thread = {};
+    g_thread->join();
+    delete g_thread;
+    g_thread = nullptr;
+
+    {
+        std::lock_guard<std::mutex> rlock(g_release_mutex);
+        g_release_quit = true;
+    }
+    g_release_cv.notify_one();
+    g_releaser->join();
+    delete g_releaser;
+    g_releaser = nullptr;
 }
 
 bool kill_switch_running() { return g_thread_id.load(std::memory_order_relaxed) != 0; }

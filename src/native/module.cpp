@@ -133,13 +133,19 @@ public:
             if (hash_bgr(pixels_.data(), pixels_.size()) != baseline) {
                 return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
             }
-            // The GDI path has no blocking acquire and returns at once, so without
-            // this the loop would spin a core flat for the whole timeout.
-            const auto spent = std::chrono::duration<double, std::milli>(Clock::now() - before)
-                                   .count();
-            if (spent < slice) {
-                std::this_thread::sleep_for(
-                    std::chrono::duration<double, std::milli>(slice - spent));
+            // Only on the GDI path, which has no blocking acquire and returns at
+            // once, so without this the loop would spin a core flat. Sleeping on the
+            // DXGI path as well turned an event wait into a 100 ms poll: a present
+            // that does not alter the hash -- a blinking caret, a clock digit --
+            // makes the acquire return early, and anything appearing during the
+            // sleep then went unreported for the rest of the slice.
+            if (!capture_.using_dxgi()) {
+                const auto spent =
+                    std::chrono::duration<double, std::milli>(Clock::now() - before).count();
+                if (spent < slice) {
+                    std::this_thread::sleep_for(
+                        std::chrono::duration<double, std::milli>(slice - spent));
+                }
             }
         }
     }
@@ -402,6 +408,7 @@ NB_MODULE(_native, m) {
         nb::arg("chord"));
 
     m.def("held_keys", &held_keys);
+    m.def("validate_chord", &validate_chord, nb::arg("chord"));
 
     m.def(
         "best_shift",
@@ -452,7 +459,12 @@ NB_MODULE(_native, m) {
 
     m.def("set_input_blocked", &set_input_blocked, nb::arg("blocked"));
     m.def("input_blocked", &input_blocked);
-    m.def("release_held_input", &release_held_input);
+    m.def("release_held_input", []() {
+        // SendInput can block for the low-level hook timeout window, and holding the
+        // GIL across that stalls every other Python thread in the process.
+        nb::gil_scoped_release release;
+        release_held_input();
+    });
 
     // The hook thread must be able to run while Python is busy, and the pump calls
     // back into SendInput, so none of these may hold the GIL.

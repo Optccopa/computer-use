@@ -81,6 +81,12 @@ void type_text(const std::string& utf8);
 // Key names follow the X11 keysym spelling the computer-use tool emits.
 void press_key(const std::string& chord, int repeat);
 
+// Resolves a chord and throws if any key name is unknown, without sending anything.
+// Exists so a click can reject "ctrl+zzz" before it moves the cursor: the modifiers
+// used to be parsed only inside the click itself, after the move had already fired,
+// which left a hover applied and the batch halted.
+void validate_chord(const std::string& chord);
+
 // Holds a chord down for a duration, then releases it.
 void hold_key(const std::string& chord, double seconds);
 

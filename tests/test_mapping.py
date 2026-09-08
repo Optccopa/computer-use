@@ -163,9 +163,16 @@ class TestCursorReporting:
             x, y, on_display = session.cursor_in_screenshot_space()
             assert on_display
             lx, ly = session.to_local(x, y)
-            # Must land in the same screenshot pixel it was reported from.
-            assert (lx * session.ref_width) // 1920 == x
-            assert (ly * session.ref_height) // 1080 == y
+            # Must land in the same screenshot pixel it was reported from. Asserted
+            # as the span property rather than by rescaling: a rescale is not the
+            # inverse of _span, and asserting it with the same wrong formula the code
+            # used is exactly how the off-by-one in cursor_position went unnoticed.
+            assert (x * 1920) // session.ref_width <= lx
+            assert lx < max(((x + 1) * 1920) // session.ref_width,
+                            (x * 1920) // session.ref_width + 1)
+            assert (y * 1080) // session.ref_height <= ly
+            assert ly < max(((y + 1) * 1080) // session.ref_height,
+                            (y * 1080) // session.ref_height + 1)
 
 
 class TestZoomRegion:
