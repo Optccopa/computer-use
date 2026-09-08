@@ -54,6 +54,9 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
                        holds modifier keys, e.g. "shift" or "ctrl+shift".
   left_click_drag   -- {"start_coordinate": [x, y], "coordinate": [x, y], "text": mods}
   mouse_move        -- {"coordinate": [x, y]}. Move without clicking, e.g. to hover.
+  mouse_move_rel    -- {"dx": px, "dy": px, "steps": 1}. Move BY a delta rather than
+                       to a position, in screenshot pixels. Positive dx is right,
+                       positive dy is down. See POINTER-LOCKED APPS below.
   left_mouse_down / left_mouse_up -- {}. Act at the current cursor position.
   cursor_position   -- {}. Reports the cursor as "X=..., Y=..." in screenshot space.
   scroll            -- {"scroll_direction": "up"|"down"|"left"|"right",
@@ -64,8 +67,38 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
   key               -- {"text": "Return" | "ctrl+s" | "alt+Tab", "repeat": 1-100}.
                        X11 keysym names: Return, Tab, Escape, BackSpace, Delete, Home,
                        End, Page_Up, Page_Down, Up, Down, Left, Right, F1-F24, space.
-  hold_key          -- {"text": chord, "duration": seconds up to 300}
+  hold_key          -- {"text": chord, "duration": seconds up to 300}. Blocks for the
+                       whole duration; use key_down/key_up to hold across actions.
+  key_down          -- {"text": chord}. Presses and does NOT release. The key stays
+                       down across later calls until key_up, so you can walk forward
+                       while turning the camera. Always release what you press.
+  key_up            -- {"text": chord}. Releases a key_down.
   wait              -- {"duration": seconds up to 300}. For a slow app to finish loading.
+
+POINTER-LOCKED APPS AND 3D GAMES (Minecraft and similar).
+Such an app hides the cursor and warps it back to the window centre every frame. It
+therefore has no cursor position to move to, and reads mouse *deltas* instead. The
+symptoms of using the wrong action are specific and worth recognising:
+  - `cursor_position` keeps reporting the exact centre of the screenshot no matter
+    what you do. That is how you know the pointer is locked.
+  - `mouse_move` to a coordinate turns the view, but repeating the identical
+    `mouse_move` turns it again by the same amount instead of doing nothing.
+Once you see either, switch to `mouse_move_rel` and stop reasoning about position.
+
+Calibrate before aiming. Turn by a known delta, read the resulting angle off an
+in-game readout (Minecraft: F3 shows Yaw and Pitch), and divide. You then have
+degrees per pixel and can hit a heading in one move rather than creeping up on it.
+Recalibrate if the game's sensitivity setting changes.
+
+To move and look at once: `key_down` w, then `mouse_move_rel` in later actions or
+calls, then `key_up` w. Do not use `hold_key` for this -- it blocks until it ends.
+Every key you press with key_down stays down until you release it; the result of
+each action tells you what is currently held.
+
+`steps` splits one delta into several sends a couple of milliseconds apart. Leave it
+at 1 for a game that accumulates deltas per frame, which is most of them. Raise it if
+a large turn comes out smaller than the calibration predicts, which means the game
+is clamping how far the view can move in a single frame.
 
 Dropdowns and scrollbars are often easier to drive with keyboard shortcuts than with
 the mouse. If an action does not appear to have worked, take a screenshot and check
@@ -159,6 +192,9 @@ class Harness:
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False)
         _native.stop_kill_switch()
+        # Anything key_down left holding outlives this process otherwise: the OS has
+        # no idea the key belonged to us, so it stays down until someone taps it.
+        _native.release_held_input()
 
 
 def build_server(config: Config | None = None) -> MCPServer:

@@ -24,6 +24,10 @@ INPUT_FUNCTIONS = (
     "press_key",
     "hold_key",
     "cursor_position",
+    "mouse_move_relative",
+    "key_down",
+    "key_up",
+    "held_keys",
 )
 
 
@@ -74,6 +78,7 @@ class RecordingInput:
     def __init__(self):
         self.events: list[tuple] = []
         self.cursor = (960, 540)
+        self.held: list[str] = []
 
     def mouse_move(self, x, y):
         self.events.append(("mouse_move", x, y))
@@ -103,6 +108,23 @@ class RecordingInput:
 
     def hold_key(self, chord, seconds):
         self.events.append(("hold_key", chord, seconds))
+
+    def mouse_move_relative(self, dx, dy, steps=1):
+        self.events.append(("mouse_move_relative", dx, dy, steps))
+        self.cursor = (self.cursor[0] + dx, self.cursor[1] + dy)
+
+    def key_down(self, chord):
+        self.events.append(("key_down", chord))
+        if chord not in self.held:
+            self.held.append(chord)
+
+    def key_up(self, chord):
+        self.events.append(("key_up", chord))
+        if chord in self.held:
+            self.held.remove(chord)
+
+    def held_keys(self):
+        return list(self.held)
 
     def cursor_position(self):
         return self.cursor

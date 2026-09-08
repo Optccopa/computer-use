@@ -53,7 +53,7 @@ _MUTATING = frozenset(
     {
         "left_click", "right_click", "middle_click", "double_click", "triple_click",
         "left_click_drag", "left_mouse_down", "left_mouse_up", "mouse_move", "scroll",
-        "type", "key", "hold_key",
+        "type", "key", "hold_key", "mouse_move_rel", "key_down", "key_up",
     }
 )
 
@@ -77,6 +77,7 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     "triple_click": frozenset({"coordinate", "text"}),
     "left_click_drag": frozenset({"start_coordinate", "coordinate", "text"}),
     "mouse_move": frozenset({"coordinate"}),
+    "mouse_move_rel": frozenset({"dx", "dy", "steps"}),
     "left_mouse_down": frozenset(),
     "left_mouse_up": frozenset(),
     "cursor_position": frozenset(),
@@ -84,6 +85,8 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     "type": frozenset({"text"}),
     "key": frozenset({"text", "repeat"}),
     "hold_key": frozenset({"text", "duration"}),
+    "key_down": frozenset({"text"}),
+    "key_up": frozenset({"text"}),
     "wait": frozenset({"duration"}),
 }
 
@@ -193,6 +196,20 @@ def validate(name: Any, params: dict[str, Any]) -> None:
             _coordinate(params["coordinate"], "coordinate")
         _text(params, required=False)
 
+    elif name == "mouse_move_rel":
+        if params.get("dx") is None and params.get("dy") is None:
+            raise ActionError("mouse_move_rel requires dx and/or dy (screenshot pixels)")
+        for field in ("dx", "dy"):
+            value = params.get(field, 0)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ActionError(f"{field} must be a number, got {value!r}")
+        steps = _integer(params.get("steps", 1), "steps")
+        if not 1 <= steps <= 1000:
+            raise ActionError("steps must be between 1 and 1000")
+
+    elif name in ("key_down", "key_up"):
+        _text(params)
+
     elif name == "type":
         _text(params)
 
@@ -248,6 +265,21 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         x, y = _coordinate(params["coordinate"], "coordinate")
         _native.mouse_move(*session.to_screen(x, y))
         return ActionResult(name, text="OK")
+
+    if name == "mouse_move_rel":
+        dx, dy = session.scale_delta(float(params.get("dx", 0)), float(params.get("dy", 0)))
+        _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+        return ActionResult(name, text=f"OK (moved {dx:+d}, {dy:+d} native pixels)")
+
+    if name == "key_down":
+        _native.key_down(_text(params))
+        held = _native.held_keys()
+        return ActionResult(name, text=f"OK (now held: {', '.join(held) if held else 'nothing'})")
+
+    if name == "key_up":
+        _native.key_up(_text(params))
+        held = _native.held_keys()
+        return ActionResult(name, text=f"OK (still held: {', '.join(held) if held else 'nothing'})")
 
     if name == "left_mouse_down":
         _native.mouse_down("left")

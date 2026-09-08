@@ -6,6 +6,7 @@
 #include <chrono>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <unordered_map>
 
 namespace cufast {
@@ -307,6 +308,44 @@ std::vector<WORD> parse_modifiers(const std::string& modifiers) {
     return out;
 }
 
+// Every virtual key a chord presses, in the order they must go down: named
+// modifiers first, then any the layout needs to reach the character, then the key.
+// Splits a delta into per-step deltas. Pure, so the property that matters -- that
+// the steps sum to exactly the requested delta, however the division rounds -- can
+// be tested without moving a real mouse.
+std::vector<std::pair<int, int>> plan_relative_steps(int dx, int dy, int steps) {
+    std::vector<std::pair<int, int>> out;
+    int sent_x = 0, sent_y = 0;
+    for (int i = 1; i <= steps; ++i) {
+        // Derived from the running total rather than a per-step quotient, so
+        // rounding error cannot accumulate across steps.
+        const int want_x = static_cast<int>(std::llround(static_cast<double>(dx) * i / steps));
+        const int want_y = static_cast<int>(std::llround(static_cast<double>(dy) * i / steps));
+        const int step_x = want_x - sent_x;
+        const int step_y = want_y - sent_y;
+        sent_x = want_x;
+        sent_y = want_y;
+        if (step_x != 0 || step_y != 0) out.emplace_back(step_x, step_y);
+    }
+    return out;
+}
+
+std::vector<WORD> chord_vks(const std::string& chord) {
+    const auto parts = split_chord(chord);
+    std::vector<WORD> vks;
+    for (size_t i = 0; i + 1 < parts.size(); ++i) vks.push_back(resolve_key(parts[i]).vk);
+    const KeyStroke key = resolve_key(parts.back());
+
+    auto already = [&vks](WORD vk) {
+        return std::find(vks.begin(), vks.end(), vk) != vks.end();
+    };
+    if (key.shift && !already(VK_SHIFT)) vks.push_back(VK_SHIFT);
+    if (key.ctrl && !already(VK_CONTROL)) vks.push_back(VK_CONTROL);
+    if (key.alt && !already(VK_MENU)) vks.push_back(VK_MENU);
+    vks.push_back(key.vk);
+    return vks;
+}
+
 void mouse_button_flags(MouseButton button, DWORD* down, DWORD* up) {
     switch (button) {
         case MouseButton::Left:   *down = MOUSEEVENTF_LEFTDOWN;   *up = MOUSEEVENTF_LEFTUP;   break;
@@ -375,6 +414,19 @@ void release_held_input() noexcept {
     for (const auto& b : kButtons) {
         if (GetAsyncKeyState(b.vk) & 0x8000) push_mouse(batch, b.up);
     }
+
+    // Then everything key_down is holding. These are not modifiers and so are not
+    // in the table above -- a latched W is what walks the player into a wall.
+    {
+        std::lock_guard<std::mutex> lock(g_held_mutex);
+        for (auto entry = g_held.rbegin(); entry != g_held.rend(); ++entry) {
+            for (auto vk = entry->second.rbegin(); vk != entry->second.rend(); ++vk) {
+                push_key(batch, *vk, true);
+            }
+        }
+        g_held.clear();
+    }
+
     for (const auto& k : kKeys) {
         if (GetAsyncKeyState(k.vk) & 0x8000) push_key(batch, k.release, true);
     }
@@ -607,6 +659,99 @@ void press_key(const std::string& chord, int repeat) {
 
     guard.release_into(batch);
     send(batch);
+}
+
+void mouse_move_relative(int dx, int dy, int steps) {
+    check_allowed();
+    // A bound rather than a validation: the point is that no single call can send
+    // the pointer somewhere unrecoverable, not that the number is meaningful.
+    constexpr int kMaxDelta = 100000;
+    if (dx < -kMaxDelta || dx > kMaxDelta || dy < -kMaxDelta || dy > kMaxDelta) {
+        throw Error("relative move is larger than 100000 pixels on an axis");
+    }
+    if (steps < 1) steps = 1;
+    if (steps > 1000) throw Error("steps must be between 1 and 1000");
+
+    // Each step is its own SendInput call. Batching them into one call would have
+    // the target coalesce the whole thing into a single frame's delta, which is
+    // exactly what splitting was meant to avoid.
+    const auto plan = plan_relative_steps(dx, dy, steps);
+    for (size_t i = 0; i < plan.size(); ++i) {
+        std::vector<INPUT> batch;
+        INPUT in{};
+        in.type = INPUT_MOUSE;
+        in.mi.dx = plan[i].first;
+        in.mi.dy = plan[i].second;
+        // No MOUSEEVENTF_ABSOLUTE: that is the whole point. This reaches a
+        // raw-input client as MOUSE_MOVE_RELATIVE, which is the only form a
+        // pointer-locked game reads.
+        in.mi.dwFlags = MOUSEEVENTF_MOVE;
+        batch.push_back(in);
+        send(batch);
+
+        if (i + 1 < plan.size()) {
+            // Roughly one frame at 240Hz. Long enough that a game polling per frame
+            // sees separate deltas, short enough that a 20-step sweep still fits in
+            // a fraction of the round trip that delivered it.
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            check_allowed();
+        }
+    }
+}
+
+std::vector<std::pair<int, int>> relative_step_plan(int dx, int dy, int steps) {
+    if (steps < 1) steps = 1;
+    return plan_relative_steps(dx, dy, steps);
+}
+
+void key_down(const std::string& chord) {
+    check_allowed();
+    const auto vks = chord_vks(chord);
+
+    // Recorded before the send, not after. If SendInput accepts a prefix and then
+    // fails, those keys are down; a registry written afterwards would not know
+    // about them and nothing would ever release them. Recording a key that never
+    // went down is harmless -- releasing an unpressed key is a no-op.
+    {
+        std::lock_guard<std::mutex> lock(g_held_mutex);
+        auto it = std::find_if(g_held.begin(), g_held.end(),
+                               [&chord](const auto& e) { return e.first == chord; });
+        if (it == g_held.end()) g_held.emplace_back(chord, vks);
+    }
+
+    std::vector<INPUT> batch;
+    for (WORD vk : vks) push_key(batch, vk, false);
+    send(batch);
+}
+
+void key_up(const std::string& chord) {
+    // Deliberately not gated on the kill switch, for the same reason mouse_up is
+    // not: the recovery path must never be the thing that is blocked.
+    std::vector<WORD> vks;
+    {
+        std::lock_guard<std::mutex> lock(g_held_mutex);
+        auto it = std::find_if(g_held.begin(), g_held.end(),
+                               [&chord](const auto& e) { return e.first == chord; });
+        if (it != g_held.end()) {
+            vks = it->second;
+            g_held.erase(it);
+        }
+    }
+    // Falling back to resolving the chord covers a release for something this
+    // process did not press -- a key left down by a previous run, say.
+    if (vks.empty()) vks = chord_vks(chord);
+
+    std::vector<INPUT> batch;
+    for (auto it = vks.rbegin(); it != vks.rend(); ++it) push_key(batch, *it, true);
+    send_release(batch);
+}
+
+std::vector<std::string> held_keys() {
+    std::lock_guard<std::mutex> lock(g_held_mutex);
+    std::vector<std::string> out;
+    out.reserve(g_held.size());
+    for (const auto& entry : g_held) out.push_back(entry.first);
+    return out;
 }
 
 void hold_key(const std::string& chord, double seconds) {

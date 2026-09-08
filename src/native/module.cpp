@@ -1,5 +1,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/vector.h>
 
 #include <mutex>
@@ -291,6 +292,34 @@ NB_MODULE(_native, m) {
             mouse_scroll(direction, amount, modifiers);
         },
         nb::arg("direction"), nb::arg("amount"), nb::arg("modifiers") = "");
+
+    m.def(
+        "mouse_move_relative",
+        [](int dx, int dy, int steps) {
+            nb::gil_scoped_release release;
+            mouse_move_relative(dx, dy, steps);
+        },
+        nb::arg("dx"), nb::arg("dy"), nb::arg("steps") = 1);
+
+    m.def(
+        "key_down",
+        [](const std::string& chord) {
+            nb::gil_scoped_release release;
+            key_down(chord);
+        },
+        nb::arg("chord"));
+
+    m.def(
+        "key_up",
+        [](const std::string& chord) {
+            nb::gil_scoped_release release;
+            key_up(chord);
+        },
+        nb::arg("chord"));
+
+    m.def("held_keys", &held_keys);
+    m.def("_relative_step_plan", &relative_step_plan,
+          nb::arg("dx"), nb::arg("dy"), nb::arg("steps"));
 
     m.def("cursor_position", []() {
         int x = 0, y = 0;

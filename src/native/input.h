@@ -54,6 +54,12 @@ void mouse_scroll(const std::string& direction, int amount, const std::string& m
 // frame, and for a visually smooth sweep.
 void mouse_move_relative(int dx, int dy, int steps);
 
+// The per-step deltas mouse_move_relative would send. Pure, and exposed so the
+// property that matters can be tested without moving a real mouse: the steps must
+// sum to exactly the requested delta, or a calibrated turn drifts off target by a
+// little more every time it is issued.
+std::vector<std::pair<int, int>> relative_step_plan(int dx, int dy, int steps);
+
 // Press and release as separate calls, so a key stays down across tool calls while
 // other actions run. hold_key cannot do this: it occupies the calling thread for
 // the whole duration, which makes "walk forward while turning" impossible.

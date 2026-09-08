@@ -138,6 +138,38 @@ class Session:
         lx, ly = self.to_local(x, y)
         return lx + self.screen.origin_x, ly + self.screen.origin_y
 
+    def scale_delta(self, dx: float, dy: float) -> tuple[int, int]:
+        """Screenshot-space delta -> native delta.
+
+        Relative movement is expressed in screenshot pixels so it matches every
+        other coordinate the model works in; a delta needs no origin, only the
+        scale.
+
+        Rounded to nearest rather than outward: a calibrated turn gets issued over
+        and over, and always rounding away from zero biases every one of them in the
+        direction of travel. The one exception is a delta that would round to zero,
+        which becomes the smallest move in the requested direction -- a model asking
+        to turn by a pixel and getting nothing back cannot tell that apart from the
+        action not working.
+        """
+        ref_w, ref_h = self._refresh_reference()
+        for name, value in (("dx", dx), ("dy", dy)):
+            if not math.isfinite(value):
+                raise ActionError(f"{name} must be a finite number, got {value!r}")
+
+        def scaled(value: float, native: int, ref: int) -> int:
+            exact = value * native / ref
+            # floor(|x| + 0.5), not Python's round(): banker's rounding would send
+            # exactly-half deltas alternately up and down, which is the opposite of
+            # the reproducibility a calibration needs.
+            out = int(math.copysign(math.floor(abs(exact) + 0.5), exact))
+            if out == 0 and value != 0:
+                out = 1 if value > 0 else -1
+            return out
+
+        return (scaled(dx, self.screen.width, ref_w),
+                scaled(dy, self.screen.height, ref_h))
+
     def cursor_in_screenshot_space(self) -> tuple[int, int, bool]:
         """Cursor position in the frame the model reasons about.
 
