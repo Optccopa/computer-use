@@ -176,3 +176,63 @@ class TestNativeRegistry:
         # Nothing in the suite may leave a key down; the recorder is what the other
         # tests use precisely so this stays true.
         assert _native.held_keys() == []
+
+
+@pytest.mark.desktop
+class TestRelativeIsActuallyRelative:
+    """MOUSEEVENTF_MOVE without MOUSEEVENTF_ABSOLUTE.
+
+    The one property the whole game path rests on, and mutation testing found
+    nothing covering it: adding MOUSEEVENTF_ABSOLUTE back left every test green.
+
+    This is the only test in the suite that injects real input, because it is the
+    only way to tell the two apart -- the flag is invisible from Python and its
+    entire effect is on where the cursor ends up. It moves 40 pixels and puts the
+    cursor back where it found it.
+
+    The assertion is deliberately coarse rather than exact. Windows pointer
+    ballistics scale a relative move for anything not reading raw input, so the
+    delta is not reliably 40. It does not need to be: with ABSOLUTE the same call
+    means "go to 40/65535 of the way across the desktop", which is about x=1, so
+    the two outcomes are hundreds of pixels apart.
+    """
+
+    def test_a_relative_move_does_not_warp_to_the_corner(self):
+        real_move = _native.mouse_move
+        real_rel = _native.mouse_move_relative
+        real_pos = _native.cursor_position
+
+        start = real_pos()
+        try:
+            real_move(900, 500)
+            before = real_pos()
+            assert before[0] > 500, "could not place the cursor to begin with"
+
+            real_rel(40, 0, 1)
+            after = real_pos()
+
+            assert after[0] > 500, (
+                f"the cursor jumped from {before} to {after}. A relative move was "
+                "interpreted as an absolute one: 40 of 65535 is the far left edge"
+            )
+            assert after[0] > before[0], "the move did not go right"
+        finally:
+            real_move(*start)
+
+    def test_it_moves_by_roughly_the_amount_asked(self):
+        real_move = _native.mouse_move
+        real_rel = _native.mouse_move_relative
+        real_pos = _native.cursor_position
+
+        start = real_pos()
+        try:
+            real_move(900, 500)
+            before = real_pos()
+            real_rel(0, 60, 1)
+            after = real_pos()
+            moved = after[1] - before[1]
+            # Ballistics can scale this, so the bound is generous; an absolute
+            # interpretation would put y near the top of the screen instead.
+            assert 10 <= moved <= 400, f"vertical move of {moved} is not plausible"
+        finally:
+            real_move(*start)

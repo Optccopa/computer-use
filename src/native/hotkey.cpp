@@ -62,6 +62,33 @@ void toggle_and_notify() {
     }
 }
 
+// Everything ll_keyboard decides about one Escape event, with the OS state passed in
+// rather than read. Split out so it can be tested: the hook ignores injected
+// keystrokes by design -- that is what stops the agent pressing its own stop button
+// -- which also means no test can reach this logic through SendInput.
+//
+// Returns true when the event should be swallowed.
+bool decide_key_event(bool down, bool injected, bool ctrl_down) {
+    if (injected) return false;
+    if (down && ctrl_down) {
+        // Hardware auto-repeat arrives as ordinary key-downs and KBDLLHOOKSTRUCT
+        // carries no repeat count, so a held chord is indistinguishable from a burst
+        // of fresh presses. Leaning on it for a second delivers about sixteen, and
+        // toggling on each made whether the agent ended up stopped the parity of how
+        // long the user held the key -- a coin flip on the one control that exists to
+        // stop it. The first down of a press wins; the rest are swallowed until the
+        // matching up clears the latch.
+        if (!g_swallow_next_up.exchange(true, std::memory_order_relaxed)) {
+            toggle_and_notify();
+        }
+        return true;
+    }
+    if (!down && g_swallow_next_up.exchange(false, std::memory_order_relaxed)) {
+        return true;
+    }
+    return false;
+}
+
 LRESULT CALLBACK ll_keyboard(int code, WPARAM wparam, LPARAM lparam) {
     if (code != HC_ACTION) return CallNextHookEx(nullptr, code, wparam, lparam);
 
@@ -74,22 +101,8 @@ LRESULT CALLBACK ll_keyboard(int code, WPARAM wparam, LPARAM lparam) {
         // simply by being asked to press ctrl+esc, and would make the stop button
         // something the thing being stopped can press.
         const bool injected = (ev->flags & LLKHF_INJECTED) != 0;
-        if (!injected && down && (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) {
-            // Hardware auto-repeat arrives as ordinary key-downs and KBDLLHOOKSTRUCT
-            // carries no repeat count, so a held chord is indistinguishable from a
-            // burst of fresh presses. Leaning on it for a second delivers about
-            // sixteen, and toggling on each made whether the agent ended up stopped
-            // the parity of how long the user held the key -- a coin flip on the one
-            // control that exists to stop it. The first down of a press wins; the
-            // rest are swallowed until the matching up clears the latch.
-            if (!g_swallow_next_up.exchange(true, std::memory_order_relaxed)) {
-                toggle_and_notify();
-            }
-            return 1;
-        }
-        if (!injected && !down && g_swallow_next_up.exchange(false, std::memory_order_relaxed)) {
-            return 1;
-        }
+        const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        if (decide_key_event(down, injected, ctrl)) return 1;
     }
     return CallNextHookEx(nullptr, code, wparam, lparam);
 }
@@ -150,6 +163,10 @@ void hook_thread_main(std::promise<std::string> ready) {
 }  // namespace
 
 void trip_kill_switch_for_test() { toggle_and_notify(); }
+
+bool hook_key_event_for_test(bool down, bool injected, bool ctrl_down) {
+    return decide_key_event(down, injected, ctrl_down);
+}
 
 void start_kill_switch() {
     std::lock_guard<std::mutex> lock(g_lifecycle);

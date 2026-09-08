@@ -31,4 +31,8 @@ uint64_t kill_switch_trips();
 // its own stop button -- which also means no test can drive it through SendInput.
 void trip_kill_switch_for_test();
 
+// Runs the hook's decision for one Escape event without a hook installed, so the
+// auto-repeat guard can be tested. Returns true when the event is swallowed.
+bool hook_key_event_for_test(bool down, bool injected, bool ctrl_down);
+
 }  // namespace cufast

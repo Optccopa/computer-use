@@ -497,6 +497,8 @@ NB_MODULE(_native, m) {
         nb::gil_scoped_release release;
         trip_kill_switch_for_test();
     });
+    m.def("_hook_key_event", &hook_key_event_for_test,
+          nb::arg("down"), nb::arg("injected"), nb::arg("ctrl_down"));
     m.def("kill_switch_running", &kill_switch_running);
     m.def("kill_switch_trips", &kill_switch_trips);
     m.def("dpi_per_monitor_aware", &dpi_per_monitor_aware);
