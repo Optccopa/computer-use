@@ -286,8 +286,8 @@ def run_suite(extra: list[str], report: bool = False) -> bool:
     if report and proc.returncode != 0:
         # Saying only "the suite is failing" leaves the next person running it by
         # hand to find out what. It is usually a live-desktop test that lost a race.
-        print("
-".join(proc.stdout.strip().splitlines()[-15:]))
+        for line in proc.stdout.strip().splitlines()[-15:]:
+            print(f"  {line}")
     return proc.returncode == 0
 
 
@@ -351,8 +351,8 @@ def main() -> int:
     # Retried once. The gate runs the live-desktop tests too, and those race against
     # whatever the machine is actually doing -- a single loss is not a broken suite.
     if not run_suite([], report=False) and not run_suite([], report=True):
-        print("
-The suite is already failing. Fix that before mutating anything.")
+        print()
+        print("The suite is already failing. Fix that before mutating anything.")
         return 2
 
     mutations = NATIVE_MUTATIONS if args.native else PYTHON_MUTATIONS
