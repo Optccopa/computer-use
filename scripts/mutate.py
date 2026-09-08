@@ -185,20 +185,18 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
 
 NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
-        # Both branches, because that is what the bug was -- and because mutating
-        # only ROTATE90 changes nothing on a panel that reports ROTATE270, which is
-        # what the developer's portrait monitor reports. A mutation that does not
-        # reach the code under test looks exactly like a missing test.
+        # Both branches at once, which is what the bug actually was. Mutating only
+        # ROTATE90 reaches nothing on a panel that reports ROTATE270 -- and a
+        # mutation that misses its target is indistinguishable from a missing test,
+        # which is the same trap the bug itself hid behind, one level up.
         "quarter turns are swapped (the bug that shipped)",
         "src/native/capture.cpp",
-        "ROTATE90:  turns = 1; break;",
-        "ROTATE90:  turns = 3; break;",
-    ),
-    (
-        "the other quarter turn, so a ROTATE270 panel is reached too",
-        "src/native/capture.cpp",
-        "ROTATE270: turns = 3; break;",
-        "ROTATE270: turns = 1; break;",
+        """                    case DXGI_MODE_ROTATION_ROTATE90:  turns = 1; break;
+                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
+                    case DXGI_MODE_ROTATION_ROTATE270: turns = 3; break;""",
+        """                    case DXGI_MODE_ROTATION_ROTATE90:  turns = 3; break;
+                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
+                    case DXGI_MODE_ROTATION_ROTATE270: turns = 1; break;""",
     ),
     (
         "relative movement becomes absolute again",
@@ -219,12 +217,23 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         "    result.confidence = 1.0;",
     ),
     (
+        # This one went stale when decide_key_event was split out of the hook
+        # procedure, and reported itself as SKIP -- which is the honest outcome, but
+        # only because the runner checks. A find-and-replace mutation tool is only
+        # as good as its patterns staying current with the code.
         "auto-repeat toggles the kill switch again",
         "src/native/hotkey.cpp",
-        "            if (!g_swallow_next_up.exchange(true, std::memory_order_relaxed)) {\n"
-        "                toggle_and_notify();\n            }",
-        "            toggle_and_notify();\n            "
-        "g_swallow_next_up.store(true, std::memory_order_relaxed);",
+        """        if (!g_swallow_next_up.exchange(true, std::memory_order_relaxed)) {
+            toggle_and_notify();
+        }""",
+        """        toggle_and_notify();
+        g_swallow_next_up.store(true, std::memory_order_relaxed);""",
+    ),
+    (
+        "the hook stops ignoring injected keystrokes",
+        "src/native/hotkey.cpp",
+        "    if (injected) return false;",
+        "    if (false) return false;",
     ),
 ]
 
