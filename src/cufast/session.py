@@ -351,6 +351,45 @@ class Session:
             "with calibrate."
         )
 
+    def cursor_is_on_display(self) -> bool:
+        x, y = _native.cursor_position()
+        lx, ly = x - self.screen.origin_x, y - self.screen.origin_y
+        return 0 <= lx < self.screen.width and 0 <= ly < self.screen.height
+
+    def confine_cursor(self, was_on_display: bool) -> None:
+        """Puts the cursor back if a relative move walked it off the display.
+
+        Absolute movement is bounds-checked against the display being controlled;
+        relative movement went straight around that check. Six mouse_move_rel of
+        -400 walked the cursor from the primary onto a second monitor, and a click
+        with no coordinate then lands there -- on a display the model was never
+        given. That is the one thing the coordinate system exists to prevent.
+
+        A pointer-locked game warps the cursor to its own centre every frame, so it
+        never trips this; the check costs one GetCursorPos.
+        """
+        x, y = _native.cursor_position()
+        lx, ly = x - self.screen.origin_x, y - self.screen.origin_y
+        if 0 <= lx < self.screen.width and 0 <= ly < self.screen.height:
+            return
+
+        clamped_x = min(max(lx, 0), self.screen.width - 1)
+        clamped_y = min(max(ly, 0), self.screen.height - 1)
+        _native.mouse_move_relative(clamped_x - lx, clamped_y - ly, 1)
+
+        if not was_on_display:
+            # It started off-display -- someone else moved it there. Bringing it back
+            # is right, but this move is not what took it away, so it is not an error.
+            return
+        raise ActionError(
+            f"that movement took the cursor off display {self.screen.index} to "
+            f"({lx}, {ly}), outside its {self.screen.width}x{self.screen.height} "
+            "bounds, so it has been moved back to the edge. Relative movement is for "
+            "pointer-locked applications, where the cursor never actually travels. "
+            "To reach a position, use a coordinate; to control another monitor, pass "
+            "`display`."
+        )
+
     def check_in_frame(self, x: float, y: float) -> None:
         """Rejects a coordinate that is not on the screenshot, moving nothing.
 

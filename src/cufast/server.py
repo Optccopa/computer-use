@@ -126,6 +126,17 @@ calls, then `key_up` w. Do not use `hold_key` for this -- it blocks until it end
 Every key you press with key_down stays down until you release it; the result of
 each action tells you what is currently held.
 
+Relative movement stays on the display you are controlling. In a pointer-locked
+game that costs nothing, because the cursor is warped back to centre every frame and
+never travels. Outside one, a delta that would take the cursor onto another monitor
+is refused and the cursor put back -- to reach a position use a coordinate, and to
+control another monitor pass `display`.
+
+LIMITS ON ONE CALL. At most 64 actions, at most 10 captures, and at most 8000
+characters in one `type`. These are not restrictions on what you may click; they
+stop a single batch from occupying the harness, which runs one batch at a time. Going
+over is refused rather than truncated, so split the work instead.
+
 `steps` splits one delta into several sends a couple of milliseconds apart. Leave it
 at 1 for a game that accumulates deltas per frame, which is most of them. Raise it if
 a large turn comes out smaller than the calibration predicts, which means the game

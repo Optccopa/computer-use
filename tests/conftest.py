@@ -105,6 +105,10 @@ class RecordingInput:
         # Optional FakeScreen to pan when a relative move happens, so aim
         # calibration has a view that actually responds to the mouse.
         self.screen = None
+        # A pointer-locked application (any 3D game) hides the cursor and warps it
+        # back to the window centre every frame, so relative movement turns the view
+        # without the cursor ever travelling. An ordinary desktop does move it.
+        self.pointer_locked = False
 
     def mouse_move(self, x, y):
         self.events.append(("mouse_move", x, y))
@@ -137,7 +141,8 @@ class RecordingInput:
 
     def mouse_move_relative(self, dx, dy, steps=1):
         self.events.append(("mouse_move_relative", dx, dy, steps))
-        self.cursor = (self.cursor[0] + dx, self.cursor[1] + dy)
+        if not self.pointer_locked:
+            self.cursor = (self.cursor[0] + dx, self.cursor[1] + dy)
         if self.screen is not None:
             self.screen._panned += dx
 

@@ -195,6 +195,9 @@ class TestActions:
         assert fake_input.events == [("mouse_move_relative", 400, 0, 1)]
 
     def test_look_sends_the_computed_delta(self, session, fake_input):
+        # look is for pointer-locked applications, where the cursor is warped back to
+        # centre every frame and so never leaves the display.
+        fake_input.pointer_locked = True
         session.set_look_scale(0.05, 0.05)
         execute(session, "look", {"yaw": 30})
         assert fake_input.events == [("mouse_move_relative", 1125, 0, 1)]

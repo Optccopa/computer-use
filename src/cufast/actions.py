@@ -65,6 +65,14 @@ ACTION_FAILURES = (ActionError, RuntimeError, OSError, ValueError, OverflowError
 # way to report it -- screen_info is dispatched onto the same worker.
 MAX_BATCH_DURATION_SECONDS = 600.0
 
+# Bounds on one call. None of these is a safety gate on what the model may click --
+# driving the desktop is the entire point -- they stop a single batch from consuming
+# the harness itself. The one worker thread runs batches one at a time, so an
+# unbounded batch is an unbounded outage, and the reply has to fit in a response.
+MAX_ACTIONS_PER_BATCH = 64
+MAX_TYPE_CHARS = 8000
+MAX_IMAGES_PER_BATCH = 10
+
 
 @dataclass
 class ActionResult:
@@ -305,7 +313,13 @@ def validate(name: Any, params: dict[str, Any]) -> None:
         _text(params)
 
     elif name == "type":
-        _text(params)
+        text = _text(params)
+        if len(text) > MAX_TYPE_CHARS:
+            raise ActionError(
+                f"text is {len(text)} characters, over the {MAX_TYPE_CHARS} limit for "
+                "one action. Typing is injected keystroke by keystroke and occupies "
+                "the harness for the whole time; split it, or use a file."
+            )
 
     elif name == "key":
         _text(params)
@@ -366,7 +380,9 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
 
     if name == "mouse_move_rel":
         dx, dy = session.scale_delta(float(params.get("dx", 0)), float(params.get("dy", 0)))
+        was_on = session.cursor_is_on_display()
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+        session.confine_cursor(was_on)
         return ActionResult(name, text=f"OK (moved {dx:+d}, {dy:+d} native pixels)")
 
     if name == "aim":
@@ -385,7 +401,9 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         # The probe turned the view as a side effect, and the coordinate was given
         # against the frame from before it, so that much of the turn is already done.
         dx -= already_turned
+        was_on = session.cursor_is_on_display()
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+        session.confine_cursor(was_on)
         return ActionResult(
             name,
             text=f"OK (turned {dx:+d}, {dy:+d} native pixels to bring ({x:g}, {y:g}) "
@@ -396,7 +414,9 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         yaw = float(params.get("yaw", 0))
         pitch = float(params.get("pitch", 0))
         dx, dy = session.look_delta(yaw, pitch)
+        was_on = session.cursor_is_on_display()
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+        session.confine_cursor(was_on)
         return ActionResult(name, text=f"OK (yaw {yaw:+g}, pitch {pitch:+g} degrees "
                                        f"= {dx:+d}, {dy:+d} native pixels)")
 
@@ -501,6 +521,12 @@ def run_batch(
     """
     if not actions:
         raise ActionError("actions must contain at least one action")
+    if len(actions) > MAX_ACTIONS_PER_BATCH:
+        raise ActionError(
+            f"{len(actions)} actions in one call, over the {MAX_ACTIONS_PER_BATCH} "
+            "limit. Batching is worth doing, but a batch this long cannot be reasoned "
+            "about from a single screenshot at the end of it. Split it."
+        )
 
     # Checked for the whole call, not just the injecting actions. A batch of pure
     # screenshots would otherwise succeed while the switch is engaged, and the model
@@ -533,6 +559,14 @@ def run_batch(
             f"{MAX_BATCH_DURATION_SECONDS:g}s limit for one call. The harness runs one "
             "batch at a time, so nothing else -- including screen_info -- can run "
             "while it waits. Split it up."
+        )
+
+    images = sum(1 for raw in actions if canonical(raw.get("action")) in _CAPTURING)
+    if images > MAX_IMAGES_PER_BATCH:
+        raise ActionError(
+            f"{images} captures in one call, over the {MAX_IMAGES_PER_BATCH} limit. "
+            "Every image is about 777 visual tokens, so a batch of them costs more "
+            "context than the actions are worth."
         )
 
     results: list[ActionResult] = []
