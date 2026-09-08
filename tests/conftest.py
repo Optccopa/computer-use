@@ -46,7 +46,10 @@ class FakeScreen:
         # Pretend view: how far the camera has been turned, and how much mouse it
         # takes to move the image one profile sample.
         self._panned = 0
+        self._tilted = 0
         self.pan_ratio = 2.0
+        # Separate so a test can model invert-Y or per-axis sensitivity.
+        self.tilt_ratio = 2.0
         # What wait_for_change reports: milliseconds, -1 for timeout, -2 for the
         # kill switch.
         self.change_after_ms = 120.0
@@ -55,6 +58,11 @@ class FakeScreen:
         """Simulates a display mode change, which the native layer follows."""
         self.width = width
         self.height = height
+
+    def profile_rows(self, max_w, max_h, timeout_ms=16):
+        _, dst_h = _native.plan_fit(self.width, self.height, max_w, max_h, False)
+        offset = round(self._tilted / self.tilt_ratio)
+        return [((y + offset) * 37) % 251 + ((y + offset) * 7) % 13 for y in range(dst_h)]
 
     def wait_for_change(self, timeout_seconds, grid_w=160, grid_h=90):
         self.calls.append({"wait_for_change": timeout_seconds})
@@ -145,6 +153,7 @@ class RecordingInput:
             self.cursor = (self.cursor[0] + dx, self.cursor[1] + dy)
         if self.screen is not None:
             self.screen._panned += dx
+            self.screen._tilted += dy
 
     def key_down(self, chord):
         self.events.append(("key_down", chord))

@@ -89,6 +89,15 @@ public:
         return column_profile(pixels_.data(), plan.dst_w, plan.dst_h);
     }
 
+    // The vertical counterpart, for measuring how far a pitch change moved the view.
+    std::vector<int32_t> profile_rows(int max_w, int max_h, int timeout_ms) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        FrameView frame = capture_.grab(false, timeout_ms);
+        ScalePlan plan = plan_fit(frame.width, frame.height, max_w, max_h, false);
+        downscale_bgra_to_bgr(frame, plan, pixels_, scratch_);
+        return row_profile(pixels_.data(), plan.dst_w, plan.dst_h);
+    }
+
     // Blocks until the screen changes, or the deadline passes.
     //
     // Worth doing in C++ because the wait itself is an OS primitive: DXGI's
@@ -238,6 +247,13 @@ NB_MODULE(_native, m) {
             [](Screen& self, int max_w, int max_h, int timeout_ms) {
                 nb::gil_scoped_release release;
                 return self.profile(max_w, max_h, timeout_ms);
+            },
+            nb::arg("max_w"), nb::arg("max_h"), nb::arg("timeout_ms") = 16)
+        .def(
+            "profile_rows",
+            [](Screen& self, int max_w, int max_h, int timeout_ms) {
+                nb::gil_scoped_release release;
+                return self.profile_rows(max_w, max_h, timeout_ms);
             },
             nb::arg("max_w"), nb::arg("max_h"), nb::arg("timeout_ms") = 16)
         .def(

@@ -273,3 +273,56 @@ class TestCalibrationDoesNotSurviveAModeChange:
         result = execute(session, "aim", {"coordinate": [200, 384]})
         # It must measure again rather than reusing a ratio for the old geometry.
         assert "calibrated itself" in result.text
+
+
+class TestPitchIsMeasuredNotAssumed:
+    """aim applied the horizontally-measured ratio to dy.
+
+    A game with invert-Y is then wrong on pitch from the very first aim, and one
+    with separate per-axis sensitivity is wrong by a constant factor. Neither
+    raises; both just aim at the wrong height.
+    """
+
+    def test_the_vertical_ratio_is_measured_separately(self, session, fake_screen):
+        fake_screen.pan_ratio = 2.0
+        fake_screen.tilt_ratio = 4.0
+        session.autocalibrate_aim()
+        assert session.aim_ratio == pytest.approx(2.0, rel=0.1)
+        assert session.aim_ratio_y == pytest.approx(4.0, rel=0.1)
+
+    def test_invert_y_gets_the_opposite_sign(self, session, fake_screen):
+        fake_screen.pan_ratio = 2.0
+        fake_screen.tilt_ratio = -2.0
+        session.autocalibrate_aim()
+        assert session.aim_ratio > 0
+        assert session.aim_ratio_y < 0
+
+    def test_aim_uses_the_vertical_ratio_for_dy(self, session):
+        session.set_aim_ratio(2.0)
+        session.aim_ratio_y = -3.0
+        dx, dy = session.aim_delta(612, 388)  # +100 x, +100 y from centre
+        assert dx == 200
+        assert dy == -300
+
+    def test_it_falls_back_when_the_axis_cannot_be_measured(self, session, fake_screen,
+                                                            monkeypatch):
+        # Pitch clamps at +/-90 in most games, so a probe near the limit moves
+        # nothing. Falling back to the horizontal ratio is what the code did
+        # unconditionally before, so this is no worse -- it must not fail the aim.
+        monkeypatch.setattr(session, "_measure_tilt", lambda probe: (0, 0.0, 300))
+        session.autocalibrate_aim()
+        assert session.aim_ratio is not None
+        assert session.aim_ratio_y is None
+        dx, dy = session.aim_delta(612, 388)
+        assert dx > 0 and dy > 0
+
+    def test_the_pitch_probe_is_undone(self, session, fake_screen, fake_input):
+        session.autocalibrate_aim()
+        vertical = sum(e[2] for e in fake_input.events if e[0] == "mouse_move_relative")
+        assert vertical == 0, "the vertical probe was left applied"
+
+    def test_a_mode_change_discards_it_too(self, session, fake_screen):
+        session.autocalibrate_aim()
+        fake_screen.resize(1280, 720)
+        session._refresh_reference()
+        assert session.aim_ratio_y is None

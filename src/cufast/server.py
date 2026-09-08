@@ -62,7 +62,8 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
                        that screenshot pixel ends up on the crosshair. THIS IS THE
                        ONE TO USE IN A 3D GAME: say where the thing is, not how far
                        to turn. No setup -- the first call measures the mouse
-                       sensitivity itself and remembers it.
+                       sensitivity itself, on both axes separately, and remembers
+                       it. Re-measures by itself if the display mode changes.
   look              -- {"yaw": deg, "pitch": deg}. Turn by an angle, for turning to
                        something you cannot currently see ("turn around" is yaw 180).
                        Positive yaw is right, positive pitch is down. Needs

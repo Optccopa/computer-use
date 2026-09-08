@@ -138,3 +138,34 @@ Native is 3.8 ms and serialisation is 0.37 ms, so ~24 ms is subprocess pipe late
 and asyncio scheduling — context switches, not computation. Rewriting the server in
 C++ would move the same bytes through the same pipe. The only real lever is **sending
 fewer screenshots**, which is what batching and `wait_for_change` are for.
+
+## Measured, so it does not get re-litigated
+
+From `scripts/bench.py` on a 1920x1080 primary, and from a real hour-long Minecraft
+session driven through the MCP server (233 calls):
+
+| | |
+|---|---|
+| full screenshot into the 1024x768 box | 2.62 ms |
+| JPEG encode alone | 1.24 ms |
+| zoom of a 480x270 region | 0.34 ms |
+| downscale alone | 1.53 ms |
+| native-resolution PNG, no downscale | 49.6 ms |
+| MCP round trip, end to end | 10-19 ms |
+| **model round trip** | **9-18 s** |
+| harness share of wall clock | **0.3%** |
+
+The conclusion that shapes everything else: **the harness is not the bottleneck and
+cannot become one.** Optimising capture further buys nothing. The only lever that
+moves elapsed time is making the model issue fewer calls, which is why `aim`,
+`wait_for_change` and batching exist, and why `aim` calibrates itself rather than
+asking the model to do it in a separate call.
+
+Two second-order effects from the same session, both worth remembering:
+
+- Context grew 53k -> 310k tokens over an hour, and call time went 8.5 s -> 18.1 s
+  with it. Roughly 55% of that context was accumulated screenshots.
+- Actions per call sat at 2.8, and 51 of 53 calls ended in a screenshot. A tool that
+  needs setup before it can be used does not get used: `aim` sat at zero uses in 233
+  calls while the model narrated "aim at the closest trunk" and hand-rolled pixel
+  deltas instead.

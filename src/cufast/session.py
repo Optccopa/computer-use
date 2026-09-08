@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from cufast import _native
 from cufast.config import Config
 
+# Native failures arrive as RuntimeError through nanobind. Kept local to avoid
+# importing cufast.actions, which imports this module.
+ACTION_FAILURES = (RuntimeError, OSError, ValueError, OverflowError)
+
 # How far to turn when measuring the view's response to the mouse. Big enough to
 # shift the image well clear of the noise, small enough not to fling the camera
 # somewhere unrecoverable if the sensitivity turns out to be very high.
@@ -111,6 +115,12 @@ class Session:
         # the field of view as well, because it answers "how much mouse moves a thing
         # I can see onto the crosshair".
         self.aim_ratio: float | None = None
+        # The vertical ratio, measured separately. It is usually the same number as
+        # the horizontal one, but not always: a game with invert-Y has the opposite
+        # sign, and some have independent per-axis sensitivity. Assuming they match
+        # made every pitch wrong on those, from the very first aim, with nothing
+        # raising. None means "not measured, use the horizontal one".
+        self.aim_ratio_y: float | None = None
         self._refresh_reference()
 
     def _refresh_reference(self) -> tuple[int, int]:
@@ -149,6 +159,7 @@ class Session:
         which is the cheapest correct answer available.
         """
         self.aim_ratio = None
+        self.aim_ratio_y = None
         self.look_scale = None
 
     @property
@@ -308,6 +319,59 @@ class Session:
         shift, confidence = _native.best_shift(before, after, window)
         return shift, confidence, window
 
+    def _measure_tilt(self, probe_native: int) -> tuple[int, float, int]:
+        """The vertical counterpart of _measure_pan, using row profiles.
+
+        A pitch change slides the image up or down, which a column profile cannot
+        see at all -- it sums over exactly the axis that moved.
+        """
+        _, ref_h = self._refresh_reference()
+        cfg = self.config
+        before = self.screen.profile_rows(cfg.max_width, cfg.max_height,
+                                          cfg.capture_timeout_ms)
+        _native.mouse_move_relative(0, probe_native, 1)
+        time.sleep(max(cfg.settle_ms, 50) / 1000.0)
+        after = self.screen.profile_rows(cfg.max_width, cfg.max_height,
+                                         cfg.capture_timeout_ms)
+        window = max(min(ref_h // 2, 300), 1)
+        shift, confidence = _native.best_shift(before, after, window)
+        return shift, confidence, window
+
+    def _calibrate_pitch(self) -> None:
+        """Measures the vertical ratio, and leaves it unset if it cannot.
+
+        Deliberately best-effort. Pitch clamps at plus or minus ninety degrees in
+        most games, so a probe near the limit moves nothing however hard it is
+        pushed, and a view with strong horizontal banding gives a poor vertical
+        match. Falling back to the horizontal ratio is what the code did
+        unconditionally before, so an unmeasurable axis is no worse than it was --
+        and a measurable one is now right.
+        """
+        probe = AIM_PROBE_NATIVE_PX
+        try:
+            shift, confidence, window = self._measure_tilt(probe)
+        except ACTION_FAILURES:
+            self._undo(0, probe)
+            return
+        try:
+            if (confidence >= AIM_MIN_CONFIDENCE and AIM_MIN_SHIFT_PX <= abs(shift)
+                    < window - 1):
+                ratio = -probe / shift
+                if AIM_RATIO_BOUNDS[0] <= abs(ratio) <= AIM_RATIO_BOUNDS[1]:
+                    self.aim_ratio_y = float(ratio)
+        finally:
+            self._undo(0, probe)
+
+    def _undo(self, dx: int, dy: int) -> None:
+        """Puts a probe back, without letting its own failure mask the real one."""
+        if not dx and not dy:
+            return
+        # Suppressed on purpose: this runs while a real failure is already
+        # propagating, and letting the undo's own error replace it would hide the
+        # thing that actually went wrong.
+        with contextlib.suppress(Exception):
+            _native.mouse_move_relative(-dx, -dy, 1)
+
     def autocalibrate_aim(self) -> int:
         """Works out the aim ratio by experiment. Returns native pixels already turned.
 
@@ -348,6 +412,9 @@ class Session:
                     if AIM_RATIO_BOUNDS[0] <= abs(ratio) <= AIM_RATIO_BOUNDS[1]:
                         self.set_aim_ratio(ratio)
                         committed = True
+                        # Measured rather than assumed equal, and undone, so the
+                        # horizontal accounting the caller relies on still holds.
+                        self._calibrate_pitch()
                         return turned
                 # Too little movement means a low sensitivity, so probe further.
                 probe = AIM_PROBE_RETRY_PX
@@ -460,8 +527,9 @@ class Session:
         offset_x = x - ref_w / 2.0
         offset_y = y - ref_h / 2.0
 
+        vertical = self.aim_ratio if self.aim_ratio_y is None else self.aim_ratio_y
         return (_finite_delta(offset_x * self.aim_ratio, "the horizontal turn"),
-                _finite_delta(offset_y * self.aim_ratio, "the vertical turn"))
+                _finite_delta(offset_y * vertical, "the vertical turn"))
 
     def cursor_in_screenshot_space(self) -> tuple[int, int, bool]:
         """Cursor position in the frame the model reasons about.

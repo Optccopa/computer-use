@@ -439,6 +439,30 @@ std::vector<int32_t> column_profile(const uint8_t* bgr, int w, int h) {
     return out;
 }
 
+std::vector<int32_t> row_profile(const uint8_t* bgr, int w, int h) {
+    std::vector<int32_t> out(static_cast<size_t>(std::max(h, 0)), 0);
+    if (w <= 0 || h <= 0) return out;
+
+    // Middle half of the columns, mirroring column_profile's middle band of rows:
+    // the edges of a 3D view are the most distorted by perspective and the least
+    // representative of how far the whole image moved.
+    const int x0 = w / 4;
+    const int x1 = std::max(x0 + 1, w - w / 4);
+
+    for (int y = 0; y < h; ++y) {
+        const uint8_t* row = bgr + static_cast<size_t>(y) * w * 3;
+        int32_t sum = 0;
+        for (int x = x0; x < x1; ++x) {
+            const int b = row[x * 3 + 0];
+            const int g = row[x * 3 + 1];
+            const int r = row[x * 3 + 2];
+            sum += (r * 77 + g * 150 + b * 29) >> 8;
+        }
+        out[static_cast<size_t>(y)] = sum;
+    }
+    return out;
+}
+
 ShiftEstimate best_shift(const std::vector<int32_t>& a, const std::vector<int32_t>& b,
                          int max_shift) {
     ShiftEstimate result;

@@ -77,6 +77,13 @@ std::vector<uint8_t> encode_png(const uint8_t* bgr, int w, int h);
 // camera -- both would dilute the match with signal that says nothing about the pan.
 std::vector<int32_t> column_profile(const uint8_t* bgr, int w, int h);
 
+// The same thing for the other axis: luma summed per ROW, over the middle band of
+// columns. A pitch change slides the image vertically, which a column profile is
+// completely blind to -- it sums the very pixels that moved. Without this the
+// vertical mouse ratio could only be assumed equal to the horizontal one, which is
+// wrong on any game with invert-Y and on anything with separate axis sensitivities.
+std::vector<int32_t> row_profile(const uint8_t* bgr, int w, int h);
+
 // How far `b` is displaced from `a`, in profile samples, searching +/- max_shift.
 //
 // Matched on the first difference of the profiles rather than the profiles
