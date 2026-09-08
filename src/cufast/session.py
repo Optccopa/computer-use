@@ -124,13 +124,32 @@ class Session:
         """
         native = (self.screen.width, self.screen.height)
         if native != self._native_size:
+            first = self._native_size == (0, 0)
             self._native_size = native
             # plan_fit comes from the C++ side so this matches the encoder exactly
             # rather than re-deriving the rounding rules in Python.
             self._ref = _native.plan_fit(
                 native[0], native[1], self.config.max_width, self.config.max_height, False
             )
+            if not first:
+                self._invalidate_calibration()
         return self._ref
+
+    def _invalidate_calibration(self) -> None:
+        """Both calibrations are measured against a specific screenshot size.
+
+        aim_ratio is mouse pixels per SCREENSHOT pixel, so a rotation that takes the
+        image from 1024 wide to 432 leaves every aim covering about 42% of the turn
+        it should. look_scale is worse: it is applied through the live
+        native/reference factor, but the physical unit is resolution-independent, so
+        any mode change silently rescales every turn -- a calibrated 30 degrees came
+        out as 20 after 1920x1080 -> 1280x720.
+
+        Neither failure raises. Discarding them costs one probe on the next aim,
+        which is the cheapest correct answer available.
+        """
+        self.aim_ratio = None
+        self.look_scale = None
 
     @property
     def ref_width(self) -> int:
@@ -426,7 +445,13 @@ class Session:
         aim converges, and by then the target is near the centre where it is linear.
         """
         if self.aim_ratio is None:
-            raise ActionError("aim is not calibrated")  # pragma: no cover - aim() calibrates
+            # Reachable again now that a mode change discards the calibration: the
+            # aim action re-probes, but a direct caller has to be told rather than
+            # multiplying by None.
+            raise ActionError(
+                "aim is not calibrated for the current display mode. The `aim` action "
+                "measures this itself; call it rather than aim_delta."
+            )
         ref_w, ref_h = self._refresh_reference()
         x = self._check_axis(x, ref_w, "x")
         y = self._check_axis(y, ref_h, "y")

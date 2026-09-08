@@ -238,3 +238,38 @@ class TestCalibrationRefusesALowerBound:
         session.autocalibrate_aim()
         assert session.aim_ratio < 0
         assert math.isfinite(session.aim_ratio)
+
+
+class TestCalibrationDoesNotSurviveAModeChange:
+    """Both calibrations are measured against a specific screenshot size.
+
+    Neither failure raised; both just turned the wrong amount, forever.
+    """
+
+    def test_look_scale_is_discarded(self, session, fake_screen):
+        session.set_look_scale(0.05, 0.05)
+        fake_screen.resize(1280, 720)
+        session._refresh_reference()
+        assert session.look_scale is None
+
+    def test_aim_ratio_is_discarded(self, session, fake_screen):
+        session.set_aim_ratio(2.0)
+        fake_screen.resize(1080, 1920)
+        session._refresh_reference()
+        assert session.aim_ratio is None
+
+    def test_the_first_reference_is_not_treated_as_a_change(self, session):
+        # Construction computes the reference for the first time; wiping a
+        # calibration set immediately afterwards would make aim uncalibratable.
+        session.set_aim_ratio(3.0)
+        session._refresh_reference()
+        assert session.aim_ratio == 3.0
+
+    def test_aim_recalibrates_itself_after_a_change(self, session, fake_screen,
+                                                    fake_input):
+        execute(session, "aim", {"coordinate": [600, 288]})
+        assert session.aim_ratio is not None
+        fake_screen.resize(1080, 1920)
+        result = execute(session, "aim", {"coordinate": [200, 384]})
+        # It must measure again rather than reusing a ratio for the old geometry.
+        assert "calibrated itself" in result.text

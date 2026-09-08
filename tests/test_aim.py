@@ -145,10 +145,22 @@ class TestAimGeometry:
         with pytest.raises(ActionError, match="outside the screenshot"):
             aimed.aim_delta(5000, 288)
 
-    def test_it_follows_a_mode_change(self, aimed, fake_screen):
-        # The crosshair is the centre of whatever image was last delivered, so a
-        # rotation must move it rather than leaving every aim biased.
+    def test_a_mode_change_discards_the_calibration(self, aimed, fake_screen):
+        # aim_ratio is mouse pixels per SCREENSHOT pixel, so a rotation that takes
+        # the image from 1024 wide to 432 leaves every aim covering about 42% of the
+        # turn it should -- and nothing raises. Discarding costs one probe.
+        assert aimed.aim_ratio is not None
+        fake_screen.resize(1080, 1920)
+        aimed._refresh_reference()
+        assert aimed.aim_ratio is None
+        with pytest.raises(ActionError, match="not calibrated"):
+            aimed.aim_delta(216, 384)
+
+    def test_the_crosshair_follows_a_mode_change(self, aimed, fake_screen):
+        # The crosshair is the centre of whatever image was last delivered.
         fake_screen.resize(1080, 1920)  # 432x768, centre (216, 384)
+        aimed._refresh_reference()
+        aimed.set_aim_ratio(2.0)  # recalibrated for the new mode
         assert aimed.aim_delta(216, 384) == (0, 0)
 
 

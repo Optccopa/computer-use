@@ -148,13 +148,15 @@ void Capture::init_dib(int width, int height) {
     cursor_drawn_ = false;
 }
 
-void Capture::ensure_geometry() {
+void Capture::ensure_geometry(bool force) {
     // GetSystemMetrics is a handful of nanoseconds, so this guard is effectively
     // free next to the ~4 ms pipeline it protects; the full re-enumeration only
     // runs when the desktop layout actually moved.
     const RECT current = virtual_screen_rect();
     const int count = GetSystemMetrics(SM_CMONITORS);
-    if (count == seen_monitor_count_ && same_rect(current, seen_virtual_rect_)) return;
+    if (!force && count == seen_monitor_count_ && same_rect(current, seen_virtual_rect_)) {
+        return;
+    }
 
     seen_monitor_count_ = count;
     seen_virtual_rect_ = current;
@@ -334,7 +336,12 @@ bool Capture::grab_dxgi(int timeout_ms) {
         const int panel_w = (dxgi_turns_ & 1) ? height_ : width_;
         const int panel_h = (dxgi_turns_ & 1) ? width_ : height_;
         if (static_cast<int>(td.Width) != panel_w || static_cast<int>(td.Height) != panel_h) {
-            ensure_geometry();
+            // Forced: the texture size disagreeing with ours IS the evidence that
+            // the mode changed, and on a monitor that is not on the right or bottom
+            // edge of the desktop the cheap guard sees nothing. Without this the
+            // capture stuck on GDI forever, still reporting the old resolution, and
+            // every click mapped through it landed on the wrong display.
+            ensure_geometry(true);
             needs_reseed_ = true;
             return false;
         }

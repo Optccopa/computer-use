@@ -60,7 +60,11 @@ private:
     // Re-resolves this monitor and resizes the surface if the display mode changed.
     // Without it a resolution change silently produces a cropped frame that still
     // reports the old dimensions, which maps every later click to the wrong place.
-    void ensure_geometry();
+    // force skips the cheap guard. The guard only notices a change that alters the
+    // monitor count or the virtual-desktop bounding box, and a monitor that is not on
+    // the right or bottom edge can change mode without altering either -- so a caller
+    // that already knows the geometry moved has to be able to say so.
+    void ensure_geometry(bool force = false);
 
     bool init_dxgi();
     void teardown_dxgi();
