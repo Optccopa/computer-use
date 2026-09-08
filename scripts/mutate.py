@@ -327,7 +327,7 @@ def dirty_files() -> list[str]:
 # in the working tree looking exactly like real code. The second one disabled zoom's
 # far-corner validation. A cleanup that only runs on the paths you remembered is the
 # same class of bug as a test that only covers the cases you thought of.
-_IN_FLIGHT: tuple[str, str] | None = None
+_IN_FLIGHT: tuple[str, bytes] | None = None
 
 
 def _emergency_restore() -> None:
