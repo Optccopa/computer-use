@@ -85,7 +85,15 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
                        down across later calls until key_up, so you can walk forward
                        while turning the camera. Always release what you press.
   key_up            -- {"text": chord}. Releases a key_down.
-  wait              -- {"duration": seconds up to 300}. For a slow app to finish loading.
+  wait              -- {"duration": seconds up to 300}. A fixed sleep. Prefer
+                       wait_for_change whenever you are waiting for something to
+                       happen rather than for a known amount of time.
+  wait_for_change   -- {"duration": seconds}. Blocks until the screen actually
+                       changes, and reports how long that took. Returns the moment
+                       it happens, so it is both faster than a guessed sleep and
+                       tells you when nothing happened at all -- which a sleep
+                       cannot. Use it after anything whose duration you do not
+                       know: a page loading, a block breaking, a menu opening.
 
 POINTER-LOCKED APPS AND 3D GAMES (Minecraft and similar).
 Such an app hides the cursor and warps it back to the window centre every frame. It

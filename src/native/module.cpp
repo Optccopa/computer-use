@@ -3,7 +3,9 @@
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/vector.h>
 
+#include <chrono>
 #include <mutex>
+#include <thread>
 
 #include "capture.hpp"
 #include "hotkey.hpp"
@@ -85,6 +87,61 @@ public:
         ScalePlan plan = plan_fit(frame.width, frame.height, max_w, max_h, false);
         downscale_bgra_to_bgr(frame, plan, pixels_, scratch_);
         return column_profile(pixels_.data(), plan.dst_w, plan.dst_h);
+    }
+
+    // Blocks until the screen changes, or the deadline passes.
+    //
+    // Worth doing in C++ because the wait itself is an OS primitive: DXGI's
+    // AcquireNextFrame parks the thread in the driver until the compositor presents
+    // a new frame, so this costs nothing while nothing is happening and returns the
+    // instant something does. The alternative the model reaches for otherwise is a
+    // guessed sleep followed by a screenshot to find out whether the guess was long
+    // enough -- and a second round trip when it was not.
+    //
+    // Returns milliseconds waited, -1 on timeout, -2 if the kill switch engaged.
+    double wait_for_change(double timeout_seconds, int grid_w, int grid_h) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        using Clock = std::chrono::steady_clock;
+
+        auto sample = [&]() {
+            FrameView frame = capture_.grab(false, 0);
+            ScalePlan plan = plan_fit(frame.width, frame.height, grid_w, grid_h, false);
+            downscale_bgra_to_bgr(frame, plan, pixels_, scratch_);
+            return hash_bgr(pixels_.data(), pixels_.size());
+        };
+
+        const auto start = Clock::now();
+        const auto deadline = start + std::chrono::duration_cast<Clock::duration>(
+                                          std::chrono::duration<double>(timeout_seconds));
+        const uint64_t baseline = sample();
+
+        while (true) {
+            if (input_blocked()) return -2.0;
+            const auto now = Clock::now();
+            if (now >= deadline) return -1.0;
+
+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       deadline - now).count();
+            // Capped so the kill switch is consulted regularly however long the
+            // caller asked to wait.
+            const int slice = static_cast<int>((std::min)(remaining, static_cast<long long>(100)));
+
+            const auto before = Clock::now();
+            FrameView frame = capture_.grab(false, slice);
+            ScalePlan plan = plan_fit(frame.width, frame.height, grid_w, grid_h, false);
+            downscale_bgra_to_bgr(frame, plan, pixels_, scratch_);
+            if (hash_bgr(pixels_.data(), pixels_.size()) != baseline) {
+                return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+            }
+            // The GDI path has no blocking acquire and returns at once, so without
+            // this the loop would spin a core flat for the whole timeout.
+            const auto spent = std::chrono::duration<double, std::milli>(Clock::now() - before)
+                                   .count();
+            if (spent < slice) {
+                std::this_thread::sleep_for(
+                    std::chrono::duration<double, std::milli>(slice - spent));
+            }
+        }
     }
 
     // Hash of the monitor downscaled to a small fixed grid. Cheap enough to poll,
@@ -177,6 +234,13 @@ NB_MODULE(_native, m) {
                 return self.profile(max_w, max_h, timeout_ms);
             },
             nb::arg("max_w"), nb::arg("max_h"), nb::arg("timeout_ms") = 16)
+        .def(
+            "wait_for_change",
+            [](Screen& self, double timeout_seconds, int grid_w, int grid_h) {
+                nb::gil_scoped_release release;
+                return self.wait_for_change(timeout_seconds, grid_w, grid_h);
+            },
+            nb::arg("timeout_seconds"), nb::arg("grid_w") = 160, nb::arg("grid_h") = 90)
         .def_prop_ro("width", &Screen::width)
         .def_prop_ro("height", &Screen::height)
         .def_prop_ro("origin_x", &Screen::origin_x)

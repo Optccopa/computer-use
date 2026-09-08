@@ -27,6 +27,13 @@ AIM_MIN_SHIFT_PX = 3
 AIM_RATIO_BOUNDS = (0.02, 200.0)
 
 
+# Kept here rather than imported from cufast.actions, which imports this module.
+STOPPED_BY_KILL_SWITCH = (
+    "STOPPED BY THE USER while waiting. They pressed the kill switch (Ctrl+Esc). "
+    "Stop what you were doing, do not retry, and tell them you have stopped."
+)
+
+
 class ActionError(Exception):
     """A computer action that failed for a reason the model should see and react to."""
 
@@ -370,6 +377,17 @@ class Session:
         self._native_size = (self.screen.width, self.screen.height)
         self._ref = (shot.width, shot.height)
         return Screenshot(shot.data, shot.width, shot.height, "image/jpeg")
+
+    def wait_for_change(self, timeout_seconds: float) -> float | None:
+        """Blocks until the screen changes. Returns milliseconds, or None on timeout.
+
+        The change is judged on a small fixed grid rather than the full frame, which
+        is what keeps a blinking caret or a moving cursor from reading as activity.
+        """
+        waited = self.screen.wait_for_change(timeout_seconds)
+        if waited == -2.0:
+            raise ActionError(STOPPED_BY_KILL_SWITCH)
+        return None if waited < 0 else waited
 
     def zoom(self, region: list[float]) -> Screenshot:
         """Re-capture one region of the screen at full resolution.

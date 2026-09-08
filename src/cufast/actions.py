@@ -28,6 +28,27 @@ STOPPED_MESSAGE = (
 )
 
 MAX_DURATION_SECONDS = 300.0
+
+# How long a wait sleeps before looking at the kill switch again. Short enough that
+# stopping feels immediate, long enough that a five minute wait is not a busy loop.
+_SLEEP_SLICE_SECONDS = 0.05
+
+
+def _sleep_interruptibly(seconds: float) -> None:
+    """Sleeps, but gives up the moment the kill switch is engaged.
+
+    A plain sleep here was a real hole in the stop button: `wait` accepts up to five
+    minutes, and the observed sessions used it constantly, so pressing Ctrl+Esc
+    during one left the harness sleeping for the rest of it before anything noticed.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        if _native.input_blocked():
+            raise ActionError(STOPPED_MESSAGE)
+        time.sleep(min(remaining, _SLEEP_SLICE_SECONDS))
 MAX_SCROLL_AMOUNT = 1000
 
 # Exceptions that represent a failed action rather than a bug in this code. Native
@@ -91,6 +112,7 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     "key_down": frozenset({"text"}),
     "key_up": frozenset({"text"}),
     "wait": frozenset({"duration"}),
+    "wait_for_change": frozenset({"duration"}),
 }
 
 ACTION_NAMES = tuple(sorted(_ALLOWED_PARAMS))
@@ -107,6 +129,8 @@ _ALIASES = {
     "mouse_move_relative": "mouse_move_rel",
     "move_rel": "mouse_move_rel",
     "rel_move": "mouse_move_rel",
+    "wait_for_screen_change": "wait_for_change",
+    "await_change": "wait_for_change",
     "screen_shot": "screenshot",
     "capture": "screenshot",
     # Observed in a real session: the model dropped the "left_" prefix, which the
@@ -285,7 +309,7 @@ def validate(name: Any, params: dict[str, Any]) -> None:
         _text(params)
         _duration(params)
 
-    elif name == "wait":
+    elif name in ("wait", "wait_for_change"):
         _duration(params)
 
 
@@ -428,8 +452,20 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         return ActionResult(name, text="OK")
 
     if name == "wait":
-        time.sleep(_duration(params))
+        _sleep_interruptibly(_duration(params))
         return ActionResult(name, text="OK")
+
+    if name == "wait_for_change":
+        limit = _duration(params)
+        waited = session.wait_for_change(limit)
+        if waited is None:
+            return ActionResult(
+                name,
+                text=f"nothing changed within {limit:g}s. The screen is still. Either "
+                "the action you were waiting on has already finished, or it never "
+                "started -- check the screenshot rather than waiting again.",
+            )
+        return ActionResult(name, text=f"OK (the screen changed after {waited:.0f} ms)")
 
     raise ActionError(f"unhandled action {name!r}")  # pragma: no cover - guarded above
 
@@ -491,10 +527,14 @@ def run_batch(
         if session.config.settle_ms and name in _MUTATING and index + 1 < len(actions):
             time.sleep(session.config.settle_ms / 1000.0)
 
-    if auto_screenshot and not failed and actions[-1]["action"] not in _CAPTURING:
+    last = canonical(actions[-1]["action"])
+    if auto_screenshot and not failed and last not in _CAPTURING:
         # Saves an entire model round trip versus asking for the screenshot in the
         # next turn, which is the single most common two-call pattern.
-        if session.config.settle_ms and actions[-1]["action"] in _MUTATING:
+        #
+        # Canonicalised, because an alias here would miss _MUTATING and skip the
+        # settle, capturing the frame from before the action it is meant to confirm.
+        if session.config.settle_ms and last in _MUTATING:
             time.sleep(session.config.settle_ms / 1000.0)
         try:
             results.append(ActionResult("screenshot", image=session.screenshot()))

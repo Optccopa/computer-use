@@ -47,11 +47,18 @@ class FakeScreen:
         # takes to move the image one profile sample.
         self._panned = 0
         self.pan_ratio = 2.0
+        # What wait_for_change reports: milliseconds, -1 for timeout, -2 for the
+        # kill switch.
+        self.change_after_ms = 120.0
 
     def resize(self, width, height):
         """Simulates a display mode change, which the native layer follows."""
         self.width = width
         self.height = height
+
+    def wait_for_change(self, timeout_seconds, grid_w=160, grid_h=90):
+        self.calls.append({"wait_for_change": timeout_seconds})
+        return self.change_after_ms
 
     def profile(self, max_w, max_h, timeout_ms=16):
         """A 1-D luma profile that pans with the fake cursor.
