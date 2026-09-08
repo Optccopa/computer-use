@@ -200,8 +200,8 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "the type cap stops bounding the batch",
         "src/cufast/actions.py",
-        "        if typed_chars > MAX_TYPE_CHARS_PER_BATCH:",
-        "        if False:",
+        "    if typed_chars > MAX_TYPE_CHARS_PER_BATCH:",
+        "    if False:",
     ),
     (
         "split relative moves stop counting as occupancy",
@@ -356,7 +356,20 @@ def _install_cleanup() -> None:
                 signal.signal(sig, bail)
 
 
-def restore(rel: str, original: str) -> None:
+def read_source(rel: str) -> bytes:
+    """Reads bytes, not text.
+
+    Going through text mode round-trips line endings: these files are CRLF in the
+    working tree and LF in the index, so a text-mode read-then-write left every
+    touched file looking modified to `git status` while `git diff` showed nothing.
+    A tool whose normal operation dirties the tree teaches you to ignore a dirty
+    tree -- and a leftover mutation is exactly what a dirty tree is supposed to
+    announce. That already cost one near-miss.
+    """
+    return (REPO / rel).read_bytes()
+
+
+def restore(rel: str, original: bytes) -> None:
     """Puts a file back, and checks it really went back.
 
     Writing the saved text is not enough on its own. An interrupt between the
@@ -365,7 +378,7 @@ def restore(rel: str, original: str) -> None:
     committed-looking working copy. git is the authority on what the file should be,
     so it gets the last word.
     """
-    (REPO / rel).write_text(original, encoding="utf-8")
+    (REPO / rel).write_bytes(original)
     proc = subprocess.run(["git", "diff", "--quiet", "--", rel], cwd=REPO)
     if proc.returncode != 0:
         subprocess.run(["git", "checkout", "--", rel], cwd=REPO, check=False)
@@ -401,20 +414,26 @@ def rebuild() -> bool:
     return proc.returncode == 0
 
 
-def apply(mutations, native: bool, extra: list[str]) -> list[str]:
+def apply(mutations, native: bool, extra: list[str]) -> tuple[list[str], list[str]]:
     global _IN_FLIGHT
     survivors = []
+    skipped = []
     for i, (name, rel, old, new) in enumerate(mutations, 1):
         path = REPO / rel
-        original = path.read_text(encoding="utf-8")
-        if old not in original:
+        original = read_source(rel)
+        target = old.encode("utf-8")
+        if target not in original:
+            # Reported separately from a pass, because it IS a gap: a mutation whose
+            # pattern went stale never ran, so it proves nothing about the suite.
+            # This used to be swallowed by the "all caught" summary.
+            skipped.append(name)
             print(f"[{i:2}/{len(mutations)}] SKIP  {name}\n"
                   f"          (pattern not found in {rel} -- the code moved)")
             continue
 
         # Recorded before the write, so a kill between the two still finds it.
         _IN_FLIGHT = (rel, original)
-        path.write_text(original.replace(old, new, 1), encoding="utf-8")
+        path.write_bytes(original.replace(target, new.encode("utf-8"), 1))
         try:
             if native and not rebuild():
                 print(f"[{i:2}/{len(mutations)}] SKIP  {name} (did not compile)")
@@ -432,7 +451,7 @@ def apply(mutations, native: bool, extra: list[str]) -> list[str]:
             _IN_FLIGHT = None
             if native:
                 rebuild()
-    return survivors
+    return survivors, skipped
 
 
 def main() -> int:
@@ -466,15 +485,25 @@ def main() -> int:
         mutations = [mutations[args.only - 1]]
 
     print(f"\n{len(mutations)} mutations, expecting every one to be caught\n")
-    survivors = apply(mutations, args.native, [] if args.native else ["-m", "not desktop"])
+    survivors, skipped = apply(
+        mutations, args.native, [] if args.native else ["-m", "not desktop"]
+    )
 
     print()
-    if not survivors:
+    if not survivors and not skipped:
         print(f"All {len(mutations)} mutations were caught.")
         return 0
-    print(f"{len(survivors)} SURVIVED -- nothing tests these:")
-    for name in survivors:
-        print(f"  - {name}")
+    if survivors:
+        print(f"{len(survivors)} SURVIVED -- nothing tests these:")
+        for name in survivors:
+            print(f"  - {name}")
+    if skipped:
+        # Not a pass. The summary used to say "all caught" with a skip in the list,
+        # which is the same lie as a green test that never ran -- and this script
+        # exists to find exactly that lie one level down.
+        print(f"{len(skipped)} never ran -- the pattern no longer matches the code:")
+        for name in skipped:
+            print(f"  - {name}")
     return 1
 
 
