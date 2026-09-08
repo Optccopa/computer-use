@@ -242,6 +242,28 @@ class TestBatch:
         # One delay between the two actions, one before the trailing screenshot.
         assert slept == [0.03, 0.03]
 
+    def test_settle_before_the_auto_screenshot_survives_an_alias(self, monkeypatch,
+                                                                 fake_screen, fake_input):
+        """The last-action check has to canonicalise the name.
+
+        It tested the raw string against _MUTATING, so a batch ending in an aliased
+        name -- "click", "mouse_down" -- missed the settle entirely and captured the
+        frame from BEFORE the action it was meant to confirm. The model then sees no
+        change and does the whole thing again. Introduced by the aliases themselves,
+        and nothing covered it until mutation testing put the bug back and every
+        test still passed.
+        """
+        import cufast.session as session_mod
+        from cufast import _native
+
+        monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
+        slow = session_mod.Session(Config(max_width=1024, max_height=768, settle_ms=30))
+        slept: list[float] = []
+        monkeypatch.setattr("cufast.actions.time.sleep", slept.append)
+        # "click" is an alias for left_click, which is in _MUTATING.
+        run_batch(slow, [{"action": "click"}], auto_screenshot=True)
+        assert slept == [0.03], "an aliased mutating action skipped the settle"
+
     def test_no_settle_delay_after_a_read_only_action(self, monkeypatch, fake_screen,
                                                       fake_input):
         import cufast.session as session_mod

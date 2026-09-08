@@ -52,12 +52,23 @@ class TestDeltaScaling:
         assert session.scale_delta(0, -80) == (0, -150)
 
     def test_a_nudge_never_rounds_to_nothing(self, session):
-        # A model asking to turn by one pixel and getting zero movement has no way
-        # to tell that apart from the action not working at all.
-        for value in (1, -1, 0.4, -0.4):
+        # A model asking to turn by a fraction of a pixel and getting zero movement
+        # has no way to tell that apart from the action not working at all.
+        #
+        # The values matter. At 1920/1024 = 1.875x anything at or above 0.267 already
+        # rounds to a nonzero native delta on its own, so a test using only 0.4 and 1
+        # passes whether or not the nudge exists -- which is exactly what mutation
+        # testing caught. Below 0.267 is the only range that exercises it.
+        for value in (0.2, -0.2, 0.1, -0.1, 0.01, -0.01):
+            assert round(abs(value) * 1920 / 1024 + 0.5) == 0 or abs(value) < 0.267
             dx, _ = session.scale_delta(value, 0)
-            assert dx != 0
+            assert dx != 0, f"dx={value} rounded away to nothing"
             assert (dx > 0) == (value > 0)
+
+    def test_a_whole_pixel_is_not_nudged_but_scaled(self, session):
+        # The nudge must not mask the ordinary path.
+        assert session.scale_delta(1, 0) == (2, 0)
+        assert session.scale_delta(0.4, 0) == (1, 0)
 
     def test_zero_stays_zero(self, session):
         assert session.scale_delta(0, 0) == (0, 0)
