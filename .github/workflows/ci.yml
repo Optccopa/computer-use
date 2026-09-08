@@ -40,7 +40,7 @@ jobs:
         run: uv lock --check
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: uv run ruff check src tests scripts
 
       - name: Test
         # The desktop-marked tests need a real display session and a system-wide

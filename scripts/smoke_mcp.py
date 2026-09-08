@@ -26,8 +26,10 @@ async def main() -> int:
         cwd=str(REPO),
     )
 
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
+    async with (
+        stdio_client(params) as (read, write),
+        ClientSession(read, write) as session,
+    ):
             await session.initialize()
 
             tools = await session.list_tools()
@@ -74,7 +76,8 @@ async def main() -> int:
                 if block.type == "text":
                     print("  ", block.text)
                 else:
-                    print(f"   image {block.mime_type}, {len(block.data) / 1024:.1f} KiB base64")
+                    size = len(block.data) / 1024
+                    print(f"   image {block.mime_type}, {size:.1f} KiB base64")
 
             print("\n--- error handling: a bad action must not kill the server ---")
             result = await session.call_tool(
@@ -86,7 +89,8 @@ async def main() -> int:
 
             print("\n--- server still alive ---")
             result = await session.call_tool(
-                "computer", {"actions": [{"action": "cursor_position"}], "auto_screenshot": False}
+                "computer",
+                {"actions": [{"action": "cursor_position"}], "auto_screenshot": False},
             )
             for block in result.content:
                 if block.type == "text":

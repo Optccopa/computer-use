@@ -94,8 +94,8 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
     (
         "the batch is no longer validated up front",
         "src/cufast/actions.py",
-        "        try:\n            validate(name, {k: v for k, v in raw.items() if k != \"action\"})",
-        "        try:\n            pass",
+        "            validate(name, {k: v for k, v in raw.items() if k != \"action\"})",
+        "            pass  # noqa",
     ),
     (
         "a failed action no longer halts the batch",
@@ -226,6 +226,33 @@ SUITE_TIMEOUT_SECONDS = 90
 BUILD_TIMEOUT_SECONDS = 300
 
 
+def dirty_files() -> list[str]:
+    proc = subprocess.run(["git", "status", "--porcelain"], cwd=REPO,
+                          capture_output=True, text=True)
+    out = []
+    for line in proc.stdout.splitlines():
+        # Untracked files are fine: this script only ever edits tracked source.
+        if line[:2].strip() and not line.startswith("??"):
+            out.append(line[3:])
+    return out
+
+
+def restore(rel: str, original: str) -> None:
+    """Puts a file back, and checks it really went back.
+
+    Writing the saved text is not enough on its own. An interrupt between the
+    mutation and the restore leaves the mutation in the tree -- which happened, and
+    left `if total_wait > MAX_BATCH_DURATION_SECONDS` reading `if False` in a
+    committed-looking working copy. git is the authority on what the file should be,
+    so it gets the last word.
+    """
+    (REPO / rel).write_text(original, encoding="utf-8")
+    proc = subprocess.run(["git", "diff", "--quiet", "--", rel], cwd=REPO)
+    if proc.returncode != 0:
+        subprocess.run(["git", "checkout", "--", rel], cwd=REPO, check=False)
+        print(f"          (restored {rel} through git)")
+
+
 def run_suite(extra: list[str]) -> bool:
     """True when the suite passes. A timeout counts as a failure, i.e. caught."""
     try:
@@ -272,7 +299,7 @@ def apply(mutations, native: bool, extra: list[str]) -> list[str]:
             else:
                 print(f"[{i:2}/{len(mutations)}] caught    {name}   ({took:.0f}s)")
         finally:
-            path.write_text(original, encoding="utf-8")
+            restore(rel, original)
             if native:
                 rebuild()
     return survivors
@@ -284,6 +311,16 @@ def main() -> int:
                         help="also mutate the C++ (rebuilds each time; slow)")
     parser.add_argument("--only", type=int, help="run a single mutation by index")
     args = parser.parse_args()
+
+    # Nothing starts until the tree is clean. This script rewrites tracked source
+    # in place, so uncommitted work is work it can destroy -- and an interrupt at
+    # the wrong moment leaves a mutation behind looking like real code.
+    dirty = dirty_files()
+    if dirty:
+        print("Uncommitted changes to tracked files. Commit or stash first:")
+        for name in dirty:
+            print(f"  {name}")
+        return 2
 
     if not run_suite([]):
         print("The suite is already failing. Fix that before mutating anything.")

@@ -48,9 +48,12 @@ def main():
     # what the agent loop wants: never block waiting on an idle compositor.
     timed("full screenshot -> 1024x768 box", lambda: screen.grab(1024, 768, timeout_ms=0))
     timed("full screenshot -> 1280x720 box", lambda: screen.grab(1280, 720, timeout_ms=0))
-    timed("full screenshot, no cursor", lambda: screen.grab(1024, 768, draw_cursor=False, timeout_ms=0))
-    timed("native-res PNG (no downscale)", lambda: screen.grab(9999, 9999, png=True, timeout_ms=0), runs=10)
-    timed("zoom 480x270 region", lambda: screen.grab(1024, 768, rx=200, ry=200, rw=480, rh=270, timeout_ms=0))
+    timed("full screenshot, no cursor",
+          lambda: screen.grab(1024, 768, draw_cursor=False, timeout_ms=0))
+    timed("native-res PNG (no downscale)",
+          lambda: screen.grab(9999, 9999, png=True, timeout_ms=0), runs=10)
+    timed("zoom 480x270 region",
+          lambda: screen.grab(1024, 768, rx=200, ry=200, rw=480, rh=270, timeout_ms=0))
     timed("sample_hash 160x90 (change poll)", lambda: screen.sample_hash(160, 90, 0))
 
     # sample_hash runs capture + downscale but no encode, so the gap against the
