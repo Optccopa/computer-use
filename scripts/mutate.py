@@ -295,10 +295,14 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         "[&chord](const HeldEntry& e) { return e.first == chord; });",
     ),
     (
-        "releasing a key leaves its other spellings held",
+        # The press side is what makes one key one entry, so that is what to break.
+        # The release side used to sweep every match, which no test could tell apart
+        # from erasing the single one -- it SURVIVED, correctly, and the sweep is
+        # gone rather than papered over with a test that cannot fail.
+        "the registry stops deduplicating on press",
         "src/native/input.cpp",
-        "    held.erase(std::remove_if(held.begin(), held.end(), matches), held.end());",
-        "    held.erase(it);",
+        "    if (it == held.end()) held.emplace_back(chord, vks);",
+        "    held.emplace_back(chord, vks);",
     ),
 ]
 
@@ -369,6 +373,23 @@ def read_source(rel: str) -> bytes:
     return (REPO / rel).read_bytes()
 
 
+def mutate_bytes(original: bytes, old: str, new: str) -> bytes | None:
+    """Applies one mutation, or None when the pattern no longer matches.
+
+    The patterns above are written with "\\n" while the working tree is CRLF, so a
+    naive byte search silently misses every multi-line pattern -- which is exactly
+    what happened when reading switched from text to bytes: three mutations went
+    stale at once, including the rotation one that this whole script was written for.
+    Translating the pattern to the file's own ending, rather than normalising the
+    file, keeps the bytes written back identical to the bytes that were there.
+    """
+    eol = b"\r\n" if b"\r\n" in original else b"\n"
+    target = old.encode("utf-8").replace(b"\n", eol)
+    if target not in original:
+        return None
+    return original.replace(target, new.encode("utf-8").replace(b"\n", eol), 1)
+
+
 def restore(rel: str, original: bytes) -> None:
     """Puts a file back, and checks it really went back.
 
@@ -421,8 +442,8 @@ def apply(mutations, native: bool, extra: list[str]) -> tuple[list[str], list[st
     for i, (name, rel, old, new) in enumerate(mutations, 1):
         path = REPO / rel
         original = read_source(rel)
-        target = old.encode("utf-8")
-        if target not in original:
+        mutated = mutate_bytes(original, old, new)
+        if mutated is None:
             # Reported separately from a pass, because it IS a gap: a mutation whose
             # pattern went stale never ran, so it proves nothing about the suite.
             # This used to be swallowed by the "all caught" summary.
@@ -433,7 +454,7 @@ def apply(mutations, native: bool, extra: list[str]) -> tuple[list[str], list[st
 
         # Recorded before the write, so a kill between the two still finds it.
         _IN_FLIGHT = (rel, original)
-        path.write_bytes(original.replace(target, new.encode("utf-8"), 1))
+        path.write_bytes(mutated)
         try:
             if native and not rebuild():
                 print(f"[{i:2}/{len(mutations)}] SKIP  {name} (did not compile)")

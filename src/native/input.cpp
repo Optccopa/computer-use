@@ -369,15 +369,18 @@ void registry_press(std::vector<HeldEntry>& held, const std::string& chord,
     if (it == held.end()) held.emplace_back(chord, vks);
 }
 
-// Removes every entry that resolves to the same keys and reports what to release, or
-// an empty vector when this process was not holding them.
+// Removes the entry holding these keys and reports what to release, or an empty
+// vector when this process was not holding them. One erase rather than a sweep,
+// because registry_press already refuses to add a second entry for the same keys --
+// a sweep here was defensive code no test could distinguish from this, which is the
+// same thing as untested code.
 std::vector<WORD> registry_release(std::vector<HeldEntry>& held,
                                    const std::vector<WORD>& resolved) {
-    auto matches = [&resolved](const HeldEntry& e) { return e.second == resolved; };
-    auto it = std::find_if(held.begin(), held.end(), matches);
+    auto it = std::find_if(held.begin(), held.end(),
+                           [&resolved](const HeldEntry& e) { return e.second == resolved; });
     if (it == held.end()) return {};
     std::vector<WORD> vks = it->second;
-    held.erase(std::remove_if(held.begin(), held.end(), matches), held.end());
+    held.erase(it);
     return vks;
 }
 
