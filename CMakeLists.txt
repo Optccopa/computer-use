@@ -15,11 +15,11 @@ find_package(nanobind CONFIG REQUIRED)
 # keep binding glue small, which also suppresses auto-vectorization and unrolling
 # in the downscale kernel -- the hottest loop in the project.
 nanobind_add_module(_native NB_STATIC NOMINSIZE LTO
-  src/cufast_native/module.cpp
-  src/cufast_native/capture.cpp
-  src/cufast_native/image.cpp
-  src/cufast_native/input.cpp
-  src/cufast_native/hotkey.cpp
+  src/native/module.cpp
+  src/native/capture.cpp
+  src/native/image.cpp
+  src/native/input.cpp
+  src/native/hotkey.cpp
 )
 
 target_compile_definitions(_native PRIVATE

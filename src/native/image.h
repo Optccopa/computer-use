@@ -48,6 +48,22 @@ void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
                            std::vector<uint8_t>& out, ScaleScratch& scratch,
                            bool force_general = false);
 
+// Copies a 32bpp BGRA surface into another, applying a quarter-turn clockwise.
+// quarter_turns is 0, 1, 2 or 3; the destination is dst_w x dst_h where an odd
+// number of turns swaps the source dimensions.
+//
+// This exists so rotated panels can use Desktop Duplication. DXGI hands back the
+// physical panel surface, which on a portrait monitor is the landscape image lying
+// on its side; GDI reports the composed desktop and needs no rotation, which is why
+// the fallback was to GDI. Rotating costs one pass over the frame, which is far
+// less than the BitBlt it replaces.
+//
+// Blocked into tiles because a quarter-turn transposes the access pattern: reading
+// or writing one destination row touches a different source row per pixel, so an
+// unblocked loop misses cache on every single pixel.
+void rotate_bgra(const uint8_t* src, int src_stride, int src_w, int src_h,
+                 uint8_t* dst, int dst_stride, int quarter_turns);
+
 // quality is 0.0-1.0. Encodes packed 24bpp BGR, stride = w * 3.
 std::vector<uint8_t> encode_jpeg(const uint8_t* bgr, int w, int h, float quality);
 std::vector<uint8_t> encode_png(const uint8_t* bgr, int w, int h);

@@ -37,6 +37,32 @@ void mouse_down(MouseButton button);
 void mouse_up(MouseButton button);
 void mouse_drag(int x0, int y0, int x1, int y1, const std::string& modifiers);
 void mouse_scroll(const std::string& direction, int amount, const std::string& modifiers);
+
+// Moves by a delta instead of to a position, which is the only thing that works in
+// a pointer-locked application: a 3D game hides the cursor and warps it back to the
+// window centre every frame, so it has no position to move to and reads deltas
+// instead. Absolute moves reach such a game as MOUSE_MOVE_ABSOLUTE raw input, which
+// it either ignores or unpacks wrongly -- in Minecraft with raw input on, horizontal
+// moves did nothing and vertical moves changed the yaw.
+//
+// Relative moves also bypass Windows pointer ballistics on the raw-input path, so
+// the delta the game sees is exactly the delta requested.
+//
+// steps splits the delta into that many separate SendInput calls a couple of
+// milliseconds apart. The default of 1 is right for a game that accumulates deltas
+// per frame; more steps are for games that clamp how far the view can turn in one
+// frame, and for a visually smooth sweep.
+void mouse_move_relative(int dx, int dy, int steps);
+
+// Press and release as separate calls, so a key stays down across tool calls while
+// other actions run. hold_key cannot do this: it occupies the calling thread for
+// the whole duration, which makes "walk forward while turning" impossible.
+//
+// Everything held this way is tracked, so the kill switch and shutdown can release
+// it. A latched W key is the game equivalent of a latched mouse button.
+void key_down(const std::string& chord);
+void key_up(const std::string& chord);
+std::vector<std::string> held_keys();
 void get_cursor_pos(int* x, int* y);
 
 // Types literal text. Uses KEYEVENTF_UNICODE so layout never matters, batching the

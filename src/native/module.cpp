@@ -206,6 +206,21 @@ NB_MODULE(_native, m) {
         nb::arg("bgra"), nb::arg("src_w"), nb::arg("src_h"), nb::arg("dst_w"), nb::arg("dst_h"),
         nb::arg("force_general") = false);
 
+    m.def(
+        "_rotate_raw",
+        [](nb::bytes bgra, int src_w, int src_h, int turns) {
+            if (src_w <= 0 || src_h <= 0) throw Error("_rotate_raw: empty source");
+            const size_t need = static_cast<size_t>(src_w) * src_h * 4;
+            if (bgra.size() < need) throw Error("_rotate_raw: buffer shorter than src_w*src_h*4");
+            const int dst_w = (turns & 1) ? src_h : src_w;
+            const int dst_h = (turns & 1) ? src_w : src_h;
+            std::vector<uint8_t> out(static_cast<size_t>(dst_w) * dst_h * 4);
+            rotate_bgra(reinterpret_cast<const uint8_t*>(bgra.c_str()), src_w * 4, src_w, src_h,
+                        out.data(), dst_w * 4, turns);
+            return nb::bytes(reinterpret_cast<const char*>(out.data()), out.size());
+        },
+        nb::arg("bgra"), nb::arg("src_w"), nb::arg("src_h"), nb::arg("turns"));
+
     m.def("list_displays", []() {
         nb::list out;
         for (const auto& mon : enumerate_monitors()) {

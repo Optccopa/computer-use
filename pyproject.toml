@@ -15,9 +15,10 @@ cufast-mcp = "cufast.server:main"
 [tool.scikit-build]
 minimum-version = "0.10"
 build-dir = "build/{wheel_tag}"
-wheel.packages = ["cufast"]
+wheel.packages = ["src/cufast"]
 cmake.version = ">=3.26"
 cmake.build-type = "Release"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+# "src" for the package under test, "." so tests can import tests.conftest helpers.
+pythonpath = ["src", "."]

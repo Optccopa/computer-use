@@ -26,7 +26,12 @@ std::vector<MonitorInfo> enumerate_monitors();
 // Captures one monitor. Prefers DXGI Desktop Duplication (~1-3 ms, keeps the
 // D3D11 device and duplication object warm across calls) and falls back to a
 // GDI BitBlt (~15-30 ms) when duplication is unavailable: secure desktop, an
-// active session switch, a rotated panel, or a driver that refuses DuplicateOutput.
+// active session switch, or a driver that refuses DuplicateOutput.
+//
+// Rotated panels stay on the fast path. Duplication hands back the physical panel
+// surface -- on a portrait monitor, the landscape image lying on its side -- so the
+// copy out applies the quarter-turn that makes it the desktop image GDI would have
+// reported. The result is identical either way; only the cost differs.
 //
 // Both paths write into one top-down 32bpp BGRA DIB section so the mouse cursor
 // can be composited with DrawIconEx regardless of which path produced the frame.
@@ -93,6 +98,9 @@ private:
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<IDXGIOutputDuplication> dupl_;
     ComPtr<ID3D11Texture2D> staging_;
+    // Clockwise quarter-turns needed to take the duplication surface to the desktop
+    // orientation. 0 on a normal landscape display.
+    int dxgi_turns_ = 0;
     // The docs recommend holding the frame until just before the next acquire:
     // while the client does not own it, the OS copies every desktop update into
     // the surface, which is wasted GPU work across the seconds an agent spends

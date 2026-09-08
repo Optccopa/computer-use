@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 
@@ -11,6 +12,13 @@ namespace cufast {
 namespace {
 
 std::atomic<bool> g_blocked{false};
+
+// Keys held by key_down and not yet released, in press order, labelled by the chord
+// that pressed them. Tracked because these outlive the call that pressed them: with
+// nothing recording them, a crashed or stopped agent leaves W held and the user
+// walks into a wall until they think to tap it themselves.
+std::mutex g_held_mutex;
+std::vector<std::pair<std::string, std::vector<WORD>>> g_held;
 
 void check_allowed() {
     if (g_blocked.load(std::memory_order_relaxed)) {

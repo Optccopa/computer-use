@@ -106,23 +106,31 @@ zooming constantly, set `CUFAST_MAX_WIDTH=1280 CUFAST_MAX_HEIGHT=720`.
 ## Layout
 
 ```
-src/cufast_native/
+src/native/           C++ -- becomes cufast._native
   capture.cpp   DXGI Desktop Duplication, GDI fallback, cursor compositing
-  image.cpp     box-filter downscale (AVX2), WIC encode, content hash
-  input.cpp     SendInput: mouse, keyboard, X11 keysym names
+  image.cpp     box-filter downscale (AVX2), quarter-turn, WIC encode, hash
+  input.cpp     SendInput: mouse, keyboard, X11 keysym names, held-key registry
+  hotkey.cpp    Ctrl+Esc kill switch (low-level keyboard hook, own thread)
   module.cpp    nanobind bindings
-cufast/
+src/cufast/           Python
   session.py    display geometry and coordinate mapping
   actions.py    action dispatch and batch semantics
   server.py     MCP server
+  config.py     environment-backed settings
+tests/                pytest; input is always stubbed
+scripts/              benchmarks and manual drivers
 ```
 
 ## Notes on the tricky parts
 
 **GDI is not just a fallback for old hardware.** Duplication is unavailable on the
-secure desktop (UAC prompts, lock screen) and returns the *unrotated* panel surface
-for rotated displays. GDI reports the composed, correctly oriented desktop, so
-rotated monitors use it deliberately rather than as a degradation.
+secure desktop (UAC prompts, lock screen) and during a session switch, so the GDI
+path is what keeps a screenshot working rather than throwing.
+
+**Rotated panels stay on the fast path.** Duplication returns the *unrotated* panel
+surface, so a portrait monitor arrives as a landscape image on its side. Rather than
+falling back to GDI, the copy out applies a cache-blocked quarter-turn: same image,
+a fraction of the cost.
 
 **The first duplication frame is blank.** The first `AcquireNextFrame` after
 `DuplicateOutput` reports `LastPresentTime == 0` and hands back a surface the

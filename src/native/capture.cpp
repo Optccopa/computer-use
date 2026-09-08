@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "image.h"
+
 namespace cufast {
 namespace {
 
@@ -190,6 +192,7 @@ bool Capture::init_dxgi() {
 
     ComPtr<IDXGIAdapter1> found_adapter;
     ComPtr<IDXGIOutput> found_output;
+    int turns = 0;
     for (UINT ai = 0; !found_output; ++ai) {
         ComPtr<IDXGIAdapter1> adapter;
         // Break on any failure, not just NOT_FOUND: anything else leaves the
@@ -201,12 +204,15 @@ bool Capture::init_dxgi() {
             DXGI_OUTPUT_DESC desc{};
             if (FAILED(output->GetDesc(&desc))) continue;
             if (monitor_.device_name == desc.DeviceName) {
-                // Duplication hands back the unrotated panel surface. Rotating it
-                // correctly costs more than it saves, so let GDI -- which always
-                // reports the composed, oriented desktop -- handle rotated panels.
-                if (desc.Rotation != DXGI_MODE_ROTATION_IDENTITY &&
-                    desc.Rotation != DXGI_MODE_ROTATION_UNSPECIFIED) {
-                    return false;
+                // DXGI_MODE_ROTATION says how the panel is turned relative to the
+                // desktop image, so undoing it is the turn in the other direction:
+                // ROTATE90 means the desktop was rotated 90 degrees clockwise onto
+                // the panel, and three more clockwise turns put it back.
+                switch (desc.Rotation) {
+                    case DXGI_MODE_ROTATION_ROTATE90:  turns = 3; break;
+                    case DXGI_MODE_ROTATION_ROTATE180: turns = 2; break;
+                    case DXGI_MODE_ROTATION_ROTATE270: turns = 1; break;
+                    default:                           turns = 0; break;
                 }
                 found_adapter = adapter;
                 found_output = output;
@@ -215,6 +221,7 @@ bool Capture::init_dxgi() {
         }
     }
     if (!found_output) return false;
+    dxgi_turns_ = turns;
 
     D3D_FEATURE_LEVEL got{};
     const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
@@ -247,6 +254,7 @@ bool Capture::init_dxgi() {
 
 void Capture::teardown_dxgi() {
     release_held_frame();
+    dxgi_turns_ = 0;
     staging_.reset();
     dupl_.reset();
     context_.reset();
@@ -320,8 +328,12 @@ bool Capture::grab_dxgi(int timeout_ms) {
 
         // A texture that does not match the surface means the mode changed under us.
         // Copying the overlap would leave stale bands and a burnt-in cursor while
-        // still reporting the old size, so resize and reseed instead.
-        if (static_cast<int>(td.Width) != width_ || static_cast<int>(td.Height) != height_) {
+        // still reporting the old size, so resize and reseed instead. The panel is
+        // the transpose of the desktop on a quarter-turned display, so that is what
+        // the texture is compared against -- not the DIB.
+        const int panel_w = (dxgi_turns_ & 1) ? height_ : width_;
+        const int panel_h = (dxgi_turns_ & 1) ? width_ : height_;
+        if (static_cast<int>(td.Width) != panel_w || static_cast<int>(td.Height) != panel_h) {
             ensure_geometry();
             needs_reseed_ = true;
             return false;
@@ -349,13 +361,11 @@ bool Capture::grab_dxgi(int timeout_ms) {
         if (FAILED(context_->Map(staging_.get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
 
         // IDXGIOutput1::DuplicateOutput always yields a 32-bit BGRA surface, which
-        // matches the DIB byte for byte.
-        const auto* src = static_cast<const uint8_t*>(mapped.pData);
-        for (int y = 0; y < height_; ++y) {
-            std::memcpy(pixels_ + static_cast<size_t>(y) * stride_,
-                        src + static_cast<size_t>(y) * mapped.RowPitch,
-                        static_cast<size_t>(stride_));
-        }
+        // matches the DIB byte for byte. rotate_bgra is a straight row copy when
+        // there is no turn to apply, so the common case pays nothing for this.
+        rotate_bgra(static_cast<const uint8_t*>(mapped.pData),
+                    static_cast<int>(mapped.RowPitch), panel_w, panel_h,
+                    pixels_, stride_, dxgi_turns_);
         context_->Unmap(staging_.get(), 0);
 
         // Deliberately not released here: the docs recommend holding until just
