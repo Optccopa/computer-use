@@ -155,6 +155,48 @@ NB_MODULE(_native, m) {
         .def_prop_ro("index", &Screen::index)
         .def_prop_ro("using_dxgi", &Screen::using_dxgi);
 
+    // Exposed so the Python coordinate mapping uses the exact same fit the encoder
+    // used, rather than a second copy of the rounding rules that could drift.
+    m.def(
+        "plan_fit",
+        [](int src_w, int src_h, int max_w, int max_h, bool allow_upscale) {
+            const ScalePlan p = plan_fit(src_w, src_h, max_w, max_h, allow_upscale);
+            return nb::make_tuple(p.dst_w, p.dst_h);
+        },
+        nb::arg("src_w"), nb::arg("src_h"), nb::arg("max_w"), nb::arg("max_h"),
+        nb::arg("allow_upscale") = false);
+
+    // Test seam: runs the downscale over a caller-supplied BGRA buffer instead of a
+    // live capture, so the SIMD and scalar paths can be compared on identical input.
+    // A screen changes between grabs; a synthetic buffer does not.
+    m.def(
+        "_downscale_raw",
+        [](nb::bytes bgra, int src_w, int src_h, int dst_w, int dst_h, bool force_general) {
+            const size_t need = static_cast<size_t>(src_w) * src_h * 4;
+            if (src_w <= 0 || src_h <= 0) throw Error("_downscale_raw: empty source");
+            if (bgra.size() < need) throw Error("_downscale_raw: buffer shorter than src_w*src_h*4");
+
+            FrameView frame;
+            frame.pixels = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(bgra.c_str()));
+            frame.width = src_w;
+            frame.height = src_h;
+            frame.stride = src_w * 4;
+
+            ScalePlan plan;
+            plan.src_x = 0;
+            plan.src_y = 0;
+            plan.src_w = src_w;
+            plan.src_h = src_h;
+            plan.dst_w = dst_w;
+            plan.dst_h = dst_h;
+
+            std::vector<uint8_t> out, scratch;
+            downscale_bgra_to_bgr(frame, plan, out, scratch, force_general);
+            return nb::bytes(reinterpret_cast<const char*>(out.data()), out.size());
+        },
+        nb::arg("bgra"), nb::arg("src_w"), nb::arg("src_h"), nb::arg("dst_w"), nb::arg("dst_h"),
+        nb::arg("force_general") = false);
+
     m.def("list_displays", []() {
         nb::list out;
         for (const auto& mon : enumerate_monitors()) {

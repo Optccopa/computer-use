@@ -25,8 +25,11 @@ ScalePlan plan_fit(int src_w, int src_h, int max_w, int max_h, bool allow_upscal
 // (which also drops alpha, so the vertical pass moves 25% less memory), then the
 // vertical pass accumulates whole rows, which vectorizes cleanly. Output is BGR
 // because that is what the WIC JPEG encoder consumes natively -- no channel swap.
+// force_general disables the SIMD narrow path. It exists so tests can prove the two
+// paths agree bit for bit; nothing in the capture path sets it.
 void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
-                           std::vector<uint8_t>& out, std::vector<uint8_t>& scratch);
+                           std::vector<uint8_t>& out, std::vector<uint8_t>& scratch,
+                           bool force_general = false);
 
 // quality is 0.0-1.0. Encodes packed 24bpp BGR, stride = w * 3.
 std::vector<uint8_t> encode_jpeg(const uint8_t* bgr, int w, int h, float quality);

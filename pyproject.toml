@@ -18,3 +18,6 @@ build-dir = "build/{wheel_tag}"
 wheel.packages = ["cufast"]
 cmake.version = ">=3.26"
 cmake.build-type = "Release"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

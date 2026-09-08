@@ -170,7 +170,8 @@ ScalePlan plan_fit(int src_w, int src_h, int max_w, int max_h, bool allow_upscal
 }
 
 void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
-                           std::vector<uint8_t>& out, std::vector<uint8_t>& scratch) {
+                           std::vector<uint8_t>& out, std::vector<uint8_t>& scratch,
+                           bool force_general) {
     if (!frame.pixels) throw Error("downscale: no frame");
     const int sx = plan.src_x, sy = plan.src_y;
     const int sw = plan.src_w, sh = plan.src_h;
@@ -202,7 +203,7 @@ void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
     // The SIMD kernel spills up to 4 bytes past each row, so carry 16 bytes of slack.
     const size_t scratch_row = static_cast<size_t>(dw) * 3;
     scratch.resize(scratch_row * sh + 16);
-    const bool narrow = max_count <= 2;
+    const bool narrow = max_count <= 2 && !force_general;
     for (int y = 0; y < sh; ++y) {
         const uint8_t* src_row = frame.pixels + static_cast<size_t>(sy + y) * frame.stride;
         uint8_t* dst_row = scratch.data() + static_cast<size_t>(y) * scratch_row;
@@ -247,7 +248,7 @@ void downscale_bgra_to_bgr(const FrameView& frame, const ScalePlan& plan,
             std::memcpy(dst_row, scratch.data() + static_cast<size_t>(r0) * row_bytes, row_bytes);
             continue;
         }
-        if (n == 2) {  // the 0.5x-1.0x range again, contiguous this time
+        if (n == 2 && !force_general) {  // the 0.5x-1.0x range again, contiguous
             vert_avg2_avx2(scratch.data() + static_cast<size_t>(r0) * row_bytes,
                            scratch.data() + static_cast<size_t>(r0 + 1) * row_bytes, dst_row,
                            row_bytes);
