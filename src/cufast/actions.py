@@ -93,6 +93,47 @@ _SECONDS_PER_TYPED_CHAR = 0.0005
 
 _STEPPED = frozenset({"mouse_move_rel", "aim", "look"})
 
+# Every parameter any action takes, as siblings of a top-level `action`. This is the
+# flat shape the standard computer tool uses, and it is the shape the model has
+# actually been trained on -- so accepting it means a model's existing priors drive
+# this harness with no translation step at all. `actions` stays the fast path, and is
+# what makes more than one action cost one round trip instead of several.
+FLAT_PARAMS = (
+    "coordinate", "text", "start_coordinate", "scroll_direction", "scroll_amount",
+    "duration", "repeat", "region", "dx", "dy", "steps", "yaw", "pitch",
+    "aim_ratio", "look_degrees_per_pixel",
+)
+
+
+def batch_from_call(
+    action: Any, actions: list[dict[str, Any]] | None, flat: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Accepts either call shape and returns the batch to run.
+
+    Both at once is refused rather than guessed at: silently preferring one would
+    run something the caller did not ask for, and a call carrying both is a mistake
+    worth reporting while it is still cheap.
+    """
+    given = {k: v for k, v in flat.items() if v is not None}
+    if actions is not None and action is not None:
+        raise ActionError(
+            "pass either `action` (one action, with its parameters alongside it) or "
+            "`actions` (an ordered list), not both."
+        )
+    if actions is not None:
+        if given:
+            raise ActionError(
+                f"{', '.join(sorted(given))} belongs inside the `actions` list, not "
+                "beside it. Each item in `actions` carries its own parameters."
+            )
+        return actions
+    if action is not None:
+        return [{"action": action, **given}]
+    raise ActionError(
+        "give either `action` with its parameters, or `actions` as an ordered list. "
+        f"Valid actions: {', '.join(ACTION_NAMES)}"
+    )
+
 
 @dataclass
 class ActionResult:

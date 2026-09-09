@@ -20,21 +20,38 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ImageContent, TextContent
 
 from cufast import _native
-from cufast.actions import run_batch
+from cufast.actions import batch_from_call, run_batch
 from cufast.config import Config
 from cufast.session import ActionError, Session
 
 TOOL_DESCRIPTION = """\
 Control this Windows desktop: take screenshots and drive the real mouse and keyboard.
 
-Pass an ORDERED LIST of actions in `actions`. They run sequentially in one call, so
-a click, the text that follows it, and the screenshot that confirms the result cost
-one round trip instead of three. Prefer one batch over several calls -- the actions
-themselves take single-digit milliseconds, so nearly all elapsed time is round trips.
-If an action fails, the ones after it are not run and are reported as such.
+This works like the computer tool you already know. One action per call is
+`{"action": "left_click", "coordinate": [x, y]}` -- the action name and its
+parameters together, exactly as usual. Every familiar action behaves the same:
+screenshot, left_click, right_click, middle_click, double_click, triple_click,
+left_click_drag, mouse_move, left_mouse_down, left_mouse_up, cursor_position,
+scroll, type, key, hold_key, wait.
 
-A screenshot is appended automatically after the last action unless the batch already
-ends with `screenshot` or `zoom`, or you pass auto_screenshot=false.
+WHAT IS DIFFERENT, AND IT IS THE ONE THING WORTH LEARNING: you can send an ORDERED
+LIST in `actions` instead, and it runs in a single call. A click, the text that
+follows it, and the screenshot that confirms the result then cost one round trip
+instead of three. The actions themselves take single-digit milliseconds while the
+round trip that delivered them takes about nine seconds, so batching is worth far
+more here than anything else you can do. If an action fails, the ones after it are
+not run and are reported as such.
+
+    one action:  {"action": "type", "text": "hello"}
+    a batch:     {"actions": [{"action": "left_click", "coordinate": [400, 300]},
+                              {"action": "type", "text": "hello"},
+                              {"action": "key", "text": "Return"}]}
+
+Use one or the other, not both in the same call.
+
+A screenshot is appended automatically after the last action unless the call already
+ends with `screenshot` or `zoom`, or you pass auto_screenshot=false. That saves the
+round trip you would otherwise spend asking what happened.
 
 Set `display` to control a different monitor (see screen_info for what is attached).
 It persists for later calls until you change it again.
@@ -44,17 +61,47 @@ origin top-left. That is a scaled-down view of the display, so never use the nat
 display resolution. `zoom` does NOT change this: after zooming, still click using
 full-screenshot coordinates.
 
-ACTIONS (each item is an object with "action" plus that action's parameters):
+ACTIONS. The first block is the standard set and behaves exactly as you expect; the
+second is what this harness adds. Whether you send one action or a list, each carries
+"action" plus that action's parameters.
+THE STANDARD SET -- unchanged, use them exactly as you always do:
   screenshot        -- {}. Capture the display.
-  zoom              -- {"region": [x0, y0, x1, y1]}. Re-capture that rectangle at full
-                       resolution. Use it whenever text is too small to read reliably:
-                       file names, tab titles, status bars, button labels, line numbers.
   left_click        -- {"coordinate": [x, y] (optional), "text": modifiers (optional)}
   right_click, middle_click, double_click, triple_click -- same shape as left_click.
                        Omit coordinate to act at the current cursor position. `text`
                        holds modifier keys, e.g. "shift" or "ctrl+shift".
   left_click_drag   -- {"start_coordinate": [x, y], "coordinate": [x, y], "text": mods}
   mouse_move        -- {"coordinate": [x, y]}. Move without clicking, e.g. to hover.
+  left_mouse_down / left_mouse_up -- {}. Act at the current cursor position.
+  cursor_position   -- {}. Reports the cursor as "X=..., Y=..." in screenshot space.
+  scroll            -- {"scroll_direction": "up"|"down"|"left"|"right",
+                        "scroll_amount": wheel clicks (0-1000),
+                        "coordinate": [x, y] (optional), "text": modifiers (optional)}
+  type              -- {"text": "..."}. Types literal text. Newlines and tabs are sent
+                       as real Return and Tab keystrokes.
+  key               -- {"text": "Return" | "ctrl+s" | "alt+Tab", "repeat": 1-100}.
+                       X11 keysym names: Return, Tab, Escape, BackSpace, Delete, Home,
+                       End, Page_Up, Page_Down, Up, Down, Left, Right, F1-F24, space.
+  hold_key          -- {"text": chord, "duration": seconds up to 300}. Blocks for the
+                       whole duration; use key_down/key_up to hold across actions.
+  wait              -- {"duration": seconds up to 300}. A fixed sleep. Prefer
+                       wait_for_change whenever you are waiting for something to
+                       happen rather than for a known amount of time.
+
+WHAT THIS HARNESS ADDS:
+  zoom              -- {"region": [x0, y0, x1, y1]}. Re-capture that rectangle at full
+                       resolution. Use it whenever text is too small to read reliably:
+                       file names, tab titles, status bars, button labels, line numbers.
+  wait_for_change   -- {"duration": seconds}. Blocks until the screen actually
+                       changes, and reports how long that took. Returns the moment
+                       it happens, so it is both faster than a guessed sleep and
+                       tells you when nothing happened at all -- which a sleep
+                       cannot. Use it after anything whose duration you do not
+                       know: a page loading, a block breaking, a menu opening.
+  key_down          -- {"text": chord}. Presses and does NOT release. The key stays
+                       down across later calls until key_up, so you can walk forward
+                       while turning the camera. Always release what you press.
+  key_up            -- {"text": chord}. Releases a key_down.
   mouse_move_rel    -- {"dx": px, "dy": px, "steps": 1}. Move BY a delta rather than
                        to a position, in screenshot pixels. Positive dx is right,
                        positive dy is down. See POINTER-LOCKED APPS below.
@@ -70,31 +117,6 @@ ACTIONS (each item is an object with "action" plus that action's parameters):
                        `calibrate` first; `aim` does not.
   calibrate         -- {"aim_ratio": n, "look_degrees_per_pixel": n}. Optional. Only
                        needed for `look`, or to override what `aim` measured.
-  left_mouse_down / left_mouse_up -- {}. Act at the current cursor position.
-  cursor_position   -- {}. Reports the cursor as "X=..., Y=..." in screenshot space.
-  scroll            -- {"scroll_direction": "up"|"down"|"left"|"right",
-                        "scroll_amount": wheel clicks (0-1000),
-                        "coordinate": [x, y] (optional), "text": modifiers (optional)}
-  type              -- {"text": "..."}. Types literal text. Newlines and tabs are sent
-                       as real Return and Tab keystrokes.
-  key               -- {"text": "Return" | "ctrl+s" | "alt+Tab", "repeat": 1-100}.
-                       X11 keysym names: Return, Tab, Escape, BackSpace, Delete, Home,
-                       End, Page_Up, Page_Down, Up, Down, Left, Right, F1-F24, space.
-  hold_key          -- {"text": chord, "duration": seconds up to 300}. Blocks for the
-                       whole duration; use key_down/key_up to hold across actions.
-  key_down          -- {"text": chord}. Presses and does NOT release. The key stays
-                       down across later calls until key_up, so you can walk forward
-                       while turning the camera. Always release what you press.
-  key_up            -- {"text": chord}. Releases a key_down.
-  wait              -- {"duration": seconds up to 300}. A fixed sleep. Prefer
-                       wait_for_change whenever you are waiting for something to
-                       happen rather than for a known amount of time.
-  wait_for_change   -- {"duration": seconds}. Blocks until the screen actually
-                       changes, and reports how long that took. Returns the moment
-                       it happens, so it is both faster than a guessed sleep and
-                       tells you when nothing happened at all -- which a sleep
-                       cannot. Use it after anything whose duration you do not
-                       know: a page loading, a block breaking, a menu opening.
 
 POINTER-LOCKED APPS AND 3D GAMES (Minecraft and similar).
 Such an app hides the cursor and warps it back to the window centre every frame. It
@@ -330,12 +352,50 @@ def build_server(config: Config | None = None) -> MCPServer:
 
     @server.tool(name="computer", description=TOOL_DESCRIPTION)
     async def computer(
-        actions: list[dict[str, Any]],
+        action: str | None = None,
+        actions: list[dict[str, Any]] | None = None,
+        coordinate: list[float] | None = None,
+        text: str | None = None,
+        start_coordinate: list[float] | None = None,
+        scroll_direction: str | None = None,
+        scroll_amount: int | None = None,
+        duration: float | None = None,
+        repeat: int | None = None,
+        region: list[float] | None = None,
+        dx: float | None = None,
+        dy: float | None = None,
+        steps: int | None = None,
+        yaw: float | None = None,
+        pitch: float | None = None,
+        aim_ratio: float | None = None,
+        look_degrees_per_pixel: float | None = None,
         auto_screenshot: bool = True,
         display: int | None = None,
     ) -> list[TextContent | ImageContent]:
+        # `action` with its parameters alongside it is the standard computer tool's
+        # shape, and the one the model already knows. `actions` is the batch form,
+        # which is where the latency win lives. Both are accepted so nothing has to
+        # be translated before the first call works.
+        flat = {
+            "coordinate": coordinate,
+            "text": text,
+            "start_coordinate": start_coordinate,
+            "scroll_direction": scroll_direction,
+            "scroll_amount": scroll_amount,
+            "duration": duration,
+            "repeat": repeat,
+            "region": region,
+            "dx": dx,
+            "dy": dy,
+            "steps": steps,
+            "yaw": yaw,
+            "pitch": pitch,
+            "aim_ratio": aim_ratio,
+            "look_degrees_per_pixel": look_degrees_per_pixel,
+        }
         try:
-            results = await harness.run(actions, auto_screenshot, display)
+            batch = batch_from_call(action, actions, flat)
+            results = await harness.run(batch, auto_screenshot, display)
         except ActionError as exc:
             raise ToolError(str(exc)) from None
         except (RuntimeError, ValueError) as exc:

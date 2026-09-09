@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from tests.conftest import FakeScreen
 
 from cufast import _native
-from cufast.actions import ACTION_NAMES
+from cufast.actions import ACTION_NAMES, FLAT_PARAMS
 from cufast.config import Config
 from cufast.server import Harness, build_server
 
@@ -38,8 +38,12 @@ class TestToolSurface:
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
         server = build_server(Config(settle_ms=0))
         tool = next(t for t in run(server.list_tools()) if t.name == "computer")
+        # `action` plus its parameters is the standard computer tool's shape, kept so
+        # a model's existing priors work here with no translation; `actions` is the
+        # batch form. Tied to FLAT_PARAMS so the two cannot drift: a parameter in one
+        # and not the other would be sent by the model and silently dropped.
         assert set(tool.input_schema["properties"]) == {
-            "actions", "auto_screenshot", "display",
+            "action", "actions", "auto_screenshot", "display", *FLAT_PARAMS,
         }
 
     def test_description_documents_every_action(self, monkeypatch, fake_screen):
