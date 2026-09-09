@@ -7,10 +7,9 @@ Fast Windows computer use for Claude Code. Screen capture and input injection in
 ![Windows](https://img.shields.io/badge/Windows_only-0078D4?logo=windows&logoColor=white)
 
 [![CI](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml/badge.svg)](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml)
-[![tests 625 passing](https://img.shields.io/badge/tests-625%20passing-brightgreen)](tests/)
+[![Linting](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![coverage 92%](https://img.shields.io/badge/coverage-92%25-brightgreen)](tests/)
 [![mutations 61 caught](https://img.shields.io/badge/mutations-61%20caught-brightgreen)](scripts/mutate.py)
-[![lint ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](pyproject.toml)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 
