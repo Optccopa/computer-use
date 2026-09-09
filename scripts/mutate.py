@@ -670,8 +670,16 @@ def apply(mutations, native: bool, extra: list[str]) -> tuple[list[str], list[st
         finally:
             restore(rel, original)
             _IN_FLIGHT = None
-            if native:
-                rebuild()
+            if native and not rebuild():
+                # Restoring the source is only half of it: what the tests import is
+                # the compiled module. A silently failed rebuild here leaves the
+                # LAST MUTATION installed while every file on disk looks correct,
+                # so the next run reports failures that are not in the code. That
+                # happened, and cost a while chasing three defects that did not
+                # exist -- hence shouting rather than returning a bool nobody reads.
+                print(f"[{i:2}/{len(mutations)}] !! REBUILD FAILED after {name}.")
+                print("          The installed module may still contain this "
+                      "mutation. Run: uv pip install -e .")
     return survivors, skipped
 
 
@@ -714,6 +722,17 @@ def main() -> int:
     survivors, skipped = apply(
         mutations, args.native, [] if args.native else ["-m", "not desktop"]
     )
+
+    # The tree is clean by now, so the suite must pass again. If it does not, what
+    # is installed is not what is on disk -- a rebuild lost a race with the .pyd
+    # still being loaded, say -- and leaving that unsaid hands the next run a set
+    # of failures with no cause anywhere in the source.
+    if args.native and not run_suite(["-m", "not desktop"], report=False):
+        print()
+        print("The source is restored but the suite is still failing, so the "
+              "installed module does not match it.")
+        print("Run: uv pip install -e .")
+        return 1
 
     print()
     if not survivors and not skipped:
