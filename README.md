@@ -1,88 +1,61 @@
 # cufast
 
-A fast Windows computer-use harness. The hot path — screen capture, downscale, JPEG
-encode, and input injection — is C++ behind [nanobind](https://nanobind.readthedocs.io);
-Python handles coordinates, action dispatch, and an MCP server you can point Claude
-Code at.
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](CMakeLists.txt)
+[![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![tests 621 passing](https://img.shields.io/badge/tests-621%20passing-brightgreen)](tests/)
+[![coverage 92%](https://img.shields.io/badge/coverage-92%25-brightgreen)](tests/)
+[![mutations 53/53 caught](https://img.shields.io/badge/mutations-53%2F53%20caught-brightgreen)](scripts/mutate.py)
+[![lint ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](pyproject.toml)
 
-Windows only, and deliberately so: it uses DXGI Desktop Duplication, WIC, and
-`SendInput` directly rather than going through a portable abstraction.
+A fast Windows computer-use harness. Screen capture, downscale, JPEG encode and
+input injection are C++ behind [nanobind](https://nanobind.readthedocs.io); Python
+handles coordinates, action dispatch and an MCP server you point Claude Code at.
 
-## Why it is fast
+Windows only, deliberately: it uses DXGI Desktop Duplication, WIC and `SendInput`
+directly rather than a portable abstraction.
 
-| Stage | Time | How |
-|---|---|---|
-| Capture 1920x1080 | ~1–3 ms | DXGI Desktop Duplication, device kept warm across calls |
-| Downscale to 1024x576 | ~4 ms | Two-pass separable box filter, AVX2 |
-| JPEG encode q75 | ~2 ms | WIC, straight from 24bpp BGR — no channel swap |
-| **Full screenshot** | **~9 ms** | 70 KiB, ~777 visual tokens |
-| MCP round trip | ~28 ms | includes stdio framing and base64 |
+## Speed
 
-Two things mattered more than the rest:
+| Stage | Time |
+|---|---|
+| Capture 1920x1080 | ~1-3 ms |
+| Downscale to 1024x576 | ~4 ms |
+| JPEG encode q75 | ~2 ms |
+| **Full screenshot** | **~9 ms** |
+| MCP round trip, measured over stdio | ~15 ms |
 
-**Batching.** The `computer` tool takes an ordered *list* of actions. A click, the
-text after it, and the confirming screenshot cost one round trip instead of three.
-The actions take milliseconds; the round trips take seconds. Nothing else in the
-project comes close to this as a speed lever.
+None of that is the point. A round trip to the model takes about nine seconds, so
+the harness is under 2% of a session and the only real lever is making fewer calls.
+That is why the `computer` tool takes an ordered *list* of actions: a click, the
+text after it and the confirming screenshot cost one round trip instead of three.
 
-**Not paying for what does not change.** A timed-out `AcquireNextFrame` means the
-screen is idle, so the cached frame is reused. Only the pixels under the previous
-cursor are saved and restored, rather than re-copying an 8 MB surface.
+An idle screen costs nothing to look at. A timed-out `AcquireNextFrame` means
+nothing was presented, so the cached frame is reused, and an identical frame is
+replaced by one line of text instead of a second copy of the same image.
 
 ## Install
 
-Requires Visual Studio with the C++ workload (MSVC 14.5+), CMake 3.26+, and Python
-3.14. The build needs AVX2 — anything from 2013 onward.
+Needs Visual Studio with the C++ workload (MSVC 14.5+), CMake 3.26+, Python 3.14,
+and a CPU with AVX2.
 
 ```bash
 uv venv --python 3.14
 uv pip install -e .
-uv pip install pytest && .venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q
 ```
 
-## Use it from Claude Code
+Then pick **one** of the two below. Not both: two servers means two harnesses, each
+with its own kill switch, and only one of them stops the one that is running.
 
-Either install the plugin, which is the whole setup in one step, or register the
-MCP server by hand. Do one or the other, not both: two servers means two harnesses,
-each with its own kill switch, and only one of them stops the one that is running.
+**Ctrl+Esc stops everything, at any time.** Press it again to release.
 
-### As a plugin (recommended)
-
-```bash
-claude plugin marketplace add /full/path/to/computer-use
-claude plugin install cufast@cufast
-```
-
-Restart Claude Code. That brings three things:
-
-- **The MCP server**, already wired up. No `claude mcp add`.
-- **A hook** that captures the screen before every turn and tells the model where
-  the image is, which display it is, and how many are attached. Hooks can inject
-  text but not images, so it writes the file and names the path; it writes at the
-  same display, box and quality the tool uses, so a pixel measured off that file is
-  a pixel the tool can click.
-- **A skill**, `driving-the-desktop`, covering batching, zoom, switching monitors
-  and the stop button.
-
-To try it for a single session without installing anything:
-
-```bash
-claude --plugin-dir /full/path/to/computer-use/plugin
-```
-
-The hook runs `plugin/bin/cufast.exe`, which CMake copies there on every build. It
-is gitignored rather than committed, because a stale copy would keep answering with
-older capture code than the source claims and nothing would report the difference.
-Build once before first use.
-
-### By hand
+### MCP
 
 ```bash
 claude mcp add cufast -- /full/path/to/.venv/Scripts/python.exe -m cufast.server
 ```
 
-Two tools appear: `computer` and `screen_info`. No hook and no skill: the model
-learns what is on screen only when it calls the tool.
+Two tools appear, `computer` and `screen_info`. Batch actions into one call:
 
 ```jsonc
 {
@@ -95,120 +68,29 @@ learns what is on screen only when it calls the tool.
 ```
 
 A screenshot is appended automatically unless the batch already ends with one.
+Every coordinate is in screenshot space, never native display pixels: on a
+1920x1080 display the default box gives a 1024x576 frame.
 
-## Coordinates
+### Plugin
 
-Screenshots are scaled down, so **every coordinate is in screenshot space**, never
-native display pixels. On a 1920x1080 display with the default 1024x768 box, that
-means a 1024x576 frame.
+The same server, plus the parts that make it usable without being asked for.
 
-A coordinate well outside the frame is rejected with a message naming both
-resolutions rather than being clamped. Clamping would click the right-hand edge and
-look like it worked — this is the failure mode worth being loud about.
-
-`zoom` re-captures a region at full resolution for reading small text, and
-deliberately does **not** get its own coordinate frame: per the computer-use spec,
-zoom images do not change the coordinate space, so clicks after a zoom still use
-full-screenshot coordinates.
-
-## Configuration
-
-| Variable | Default | Notes |
-|---|---|---|
-| `CUFAST_DISPLAY` | `0` | `0` is always the primary; see `screen_info` |
-| `CUFAST_MAX_WIDTH` | `1024` | Screenshot box, aspect preserved |
-| `CUFAST_MAX_HEIGHT` | `768` | |
-| `CUFAST_JPEG_QUALITY` | `0.75` | |
-| `CUFAST_DRAW_CURSOR` | `true` | Composites the real cursor into the frame |
-| `CUFAST_CAPTURE_TIMEOUT_MS` | `16` | One frame at 60Hz |
-| `CUFAST_SETTLE_MS` | `40` | Pause after a UI-mutating action |
-
-### Picking a screenshot size
-
-Anthropic's docs recommend 1024x768 (XGA) or 1280x720 for desktop work and warn
-against exceeding 1920x1080. On a 16:9 display:
-
-| Box | Actual | Size | Visual tokens |
-|---|---|---|---|
-| 1024x768 (default) | 1024x576 | 70 KiB | ~777 |
-| 1280x720 | 1280x720 | 97 KiB | ~1196 |
-| 1920x1080 | 1920x1080 | 248 KiB | ~2691 |
-
-Current models accept a 2576px long edge and 4784 visual tokens, so none of these is
-near the ceiling — this is a cost choice. The default trades readability for tokens
-on the assumption that `zoom` covers anything too small to read. If you find yourself
-zooming constantly, set `CUFAST_MAX_WIDTH=1280 CUFAST_MAX_HEIGHT=720`.
-
-## Layout
-
-```
-src/native/           C++ -- becomes cufast._native
-  capture.cpp   DXGI Desktop Duplication, GDI fallback, cursor compositing
-  image.cpp     box-filter downscale (AVX2), quarter-turn, WIC encode, hash
-  input.cpp     SendInput: mouse, keyboard, X11 keysym names, held-key registry
-  hotkey.cpp    Ctrl+Esc kill switch (low-level keyboard hook, own thread)
-  module.cpp    nanobind bindings
-src/cufast/           Python
-  session.py    display geometry and coordinate mapping
-  actions.py    action dispatch and batch semantics
-  server.py     MCP server
-  config.py     environment-backed settings
-tests/                pytest; input is always stubbed
-scripts/              benchmarks and manual drivers
+```bash
+cmake --build build/cli --config Release
+claude plugin marketplace add /full/path/to/computer-use
+claude plugin install cufast@cufast
 ```
 
-## Notes on the tricky parts
+Restart Claude Code. Beyond the MCP server it adds a **hook** that captures the
+screen before every turn and says which display it is and how many are attached,
+and a **skill** covering batching, zoom, monitor switching and the stop button.
 
-**GDI is not just a fallback for old hardware.** Duplication is unavailable on the
-secure desktop (UAC prompts, lock screen) and during a session switch, so the GDI
-path is what keeps a screenshot working rather than throwing.
+Build first: the hook runs `plugin/bin/cufast.exe`, which CMake copies there and
+which is gitignored rather than committed, so a stale copy can never answer with
+older capture code than the source claims.
 
-**Rotated panels stay on the fast path.** Duplication returns the *unrotated* panel
-surface, so a portrait monitor arrives as a landscape image on its side. Rather than
-falling back to GDI, the copy out applies a cache-blocked quarter-turn: same image,
-a fraction of the cost.
+To try it for one session without installing:
 
-**The first duplication frame is blank.** The first `AcquireNextFrame` after
-`DuplicateOutput` reports `LastPresentTime == 0` and hands back a surface the
-compositor has not presented into. That case seeds from GDI instead.
-
-**nanobind defaults to `/Os`.** It optimizes binding glue for size, which also
-suppressed vectorization across the downscale kernel. `NOMINSIZE` in `CMakeLists.txt`
-is load-bearing — without it the change-poll path is 4.6x slower.
-
-**`_mm256_avg_epu8` is exactly a two-pixel box average.** For any downscale between
-0.5x and 1.0x every destination pixel spans at most two source pixels, and using the
-same index twice makes the one-pixel case fall out of the same instruction, since
-`(p + p + 1) >> 1 == p`. The SIMD and scalar paths are asserted bit-identical across
-nine scale ratios in `tests/test_image.py`.
-
-**UIPI.** Windows refuses injected input into windows running at higher integrity
-than this process. If clicks silently do nothing against an elevated app, that is
-why; `SendInput` returning short is surfaced as an error rather than ignored.
-
-## Containment
-
-What the model may do here is deliberately broad: clicking destructive buttons,
-typing into terminals and reading whatever is on screen are all normal computer use,
-and none of it is gated. The boundaries are about the harness, not about the desktop:
-
-- **Kill switch.** A `WH_KEYBOARD_LL` hook on its own thread watches for Ctrl+Esc and
-  sets the `set_input_blocked` gate that every injection path checks. It ignores
-  injected keystrokes, so the agent cannot press its own stop button, and engaging it
-  releases whatever was held. Every batch is refused while it is engaged — screenshots
-  included — and it is re-checked between actions, because `key_up` and
-  `left_mouse_up` deliberately bypass the gate so recovery is never the thing blocked.
-- **Display.** Coordinates are bounds-checked against the controlled display, and
-  relative moves that would walk the cursor off it are undone and refused. `display`
-  selects a monitor per call; set `CUFAST_LOCK_DISPLAY=true` to make the configured
-  display a boundary rather than a default. `screen_info` describes another display
-  without switching to it.
-- **One call.** At most 64 actions, 10 returned images, 8000 typed characters, and
-  ~600s of estimated occupancy — waits, `steps` and typing all count, because the
-  harness runs one batch at a time and an unbounded batch is an unbounded outage.
-- **Screen content is untrusted.** The tool description says so explicitly: a
-  screenshot is data the model is looking at, not instructions it has received.
-
-## Not yet built
-
-A shell tool, UI Automation element lookup, and clipboard access.
+```bash
+claude --plugin-dir /full/path/to/computer-use/plugin
+```
