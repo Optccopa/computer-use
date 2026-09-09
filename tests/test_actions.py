@@ -233,7 +233,7 @@ class TestBatch:
         slow = session_mod.Session(Config(max_width=1024, max_height=768, settle_ms=30))
 
         slept: list[float] = []
-        monkeypatch.setattr("cufast.actions.time.sleep", slept.append)
+        monkeypatch.setattr("cufast.actions.batch.time.sleep", slept.append)
         run_batch(
             slow,
             [{"action": "left_click"}, {"action": "type", "text": "x"}],
@@ -259,7 +259,7 @@ class TestBatch:
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
         slow = session_mod.Session(Config(max_width=1024, max_height=768, settle_ms=30))
         slept: list[float] = []
-        monkeypatch.setattr("cufast.actions.time.sleep", slept.append)
+        monkeypatch.setattr("cufast.actions.batch.time.sleep", slept.append)
         # "click" is an alias for left_click, which is in _MUTATING.
         run_batch(slow, [{"action": "click"}], auto_screenshot=True)
         assert slept == [0.03], "an aliased mutating action skipped the settle"
@@ -272,6 +272,6 @@ class TestBatch:
         monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
         slow = session_mod.Session(Config(max_width=1024, max_height=768, settle_ms=30))
         slept: list[float] = []
-        monkeypatch.setattr("cufast.actions.time.sleep", slept.append)
+        monkeypatch.setattr("cufast.actions.batch.time.sleep", slept.append)
         run_batch(slow, [{"action": "cursor_position"}], auto_screenshot=True)
         assert slept == []

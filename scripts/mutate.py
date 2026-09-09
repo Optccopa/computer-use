@@ -384,6 +384,49 @@ def _install_cleanup() -> None:
                 signal.signal(sig, bail)
 
 
+SEARCH_ROOTS = ("src/cufast", "src/native")
+SEARCH_SUFFIXES = (".py", ".cpp", ".hpp")
+
+
+def resolve_target(rel: str, old: str) -> tuple[str, str] | None:
+    """Finds the file a mutation applies to, following it if the code has moved.
+
+    The recorded path is a hint, not an address. Splitting the two big modules into
+    packages invalidated all 36 paths at once, and hand-patching them would only
+    defer the same breakage to the next reorganisation -- while every mutation
+    reported SKIP, which is honest but useless.
+
+    Ambiguity is still a refusal: a pattern matching two files is a pattern that no
+    longer identifies one piece of behaviour, and quietly mutating the first is how
+    you end up testing something other than what the name claims.
+    """
+    named = REPO / rel
+    if named.is_file() and _contains(named, old):
+        return rel, ""
+
+    hits = []
+    for root in SEARCH_ROOTS:
+        base = REPO / root
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if path.suffix in SEARCH_SUFFIXES and _contains(path, old):
+                hits.append(path)
+    if len(hits) != 1:
+        return None
+    moved = hits[0].relative_to(REPO).as_posix()
+    return moved, f" (moved: {rel} -> {moved})"
+
+
+def _contains(path: pathlib.Path, old: str) -> bool:
+    try:
+        blob = path.read_bytes()
+    except OSError:
+        return False
+    eol = b"\r\n" if b"\r\n" in blob else b"\n"
+    return old.encode("utf-8").replace(b"\n", eol) in blob
+
+
 def read_source(rel: str) -> bytes:
     """Reads bytes, not text.
 
@@ -463,7 +506,14 @@ def apply(mutations, native: bool, extra: list[str]) -> tuple[list[str], list[st
     global _IN_FLIGHT
     survivors = []
     skipped = []
-    for i, (name, rel, old, new) in enumerate(mutations, 1):
+    for i, (name, recorded, old, new) in enumerate(mutations, 1):
+        found = resolve_target(recorded, old)
+        if found is None:
+            skipped.append(name)
+            print(f"[{i:2}/{len(mutations)}] SKIP  {name}\n"
+                  f"          (no single file in src/ contains this pattern any more)")
+            continue
+        rel, moved = found
         path = REPO / rel
         original = read_source(rel)
         mutated = mutate_bytes(original, old, new)
@@ -488,9 +538,9 @@ def apply(mutations, native: bool, extra: list[str]) -> tuple[list[str], list[st
             took = time.time() - started
             if passed:
                 survivors.append(name)
-                print(f"[{i:2}/{len(mutations)}] SURVIVED  {name}   ({took:.0f}s)")
+                print(f"[{i:2}/{len(mutations)}] SURVIVED  {name}   ({took:.0f}s){moved}")
             else:
-                print(f"[{i:2}/{len(mutations)}] caught    {name}   ({took:.0f}s)")
+                print(f"[{i:2}/{len(mutations)}] caught    {name}   ({took:.0f}s){moved}")
         finally:
             restore(rel, original)
             _IN_FLIGHT = None
