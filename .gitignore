@@ -54,3 +54,9 @@ desktop.ini
 # Built into the plugin by CMake, never committed: a stale copy would silently
 # serve older capture code than the source says.
 plugin/bin/cufast.exe
+
+# Written by pytest-cov when measuring coverage. A local artifact, and it
+# embeds absolute paths from the machine that produced it.
+.coverage
+.coverage.*
+htmlcov/
