@@ -99,9 +99,12 @@ THE STANDARD SET -- unchanged, use them exactly as you always do:
                        End, Page_Up, Page_Down, Up, Down, Left, Right, F1-F24, space.
   hold_key          -- {"text": chord, "duration": seconds up to 300}. Blocks for the
                        whole duration; use key_down/key_up to hold across actions.
-  wait              -- {"duration": seconds up to 300}. A fixed sleep. Prefer
-                       wait_for_change whenever you are waiting for something to
-                       happen rather than for a known amount of time.
+  wait              -- {"duration": seconds up to 300}. A fixed sleep, and the right
+                       action whenever the duration IS the point: holding the mouse
+                       to mine, holding a key to walk, letting a UI settle. Anything
+                       shaped like down / wait / up is a hold, not a sleep. Prefer
+                       wait_for_change only when you are waiting for something to
+                       happen and do not know how long it takes.
 
 WHAT THIS HARNESS ADDS:
   zoom              -- {"region": [x0, y0, x1, y1]}. Re-capture that rectangle at full
@@ -113,14 +116,19 @@ WHAT THIS HARNESS ADDS:
                        it happens, so it is both faster than a guessed sleep and
                        tells you when nothing happened at all -- which a sleep
                        cannot. Use it after anything whose duration you do not
-                       know: a page loading, a block breaking, a menu opening.
+                       know: a page loading, a menu opening, a world generating.
+                       NOT inside a hold -- it returns on the first frame that
+                       differs, which is the animation starting, so the button
+                       would come up before the block broke.
   key_down          -- {"text": chord}. Presses and does NOT release. The key stays
                        down across later calls until key_up, so you can walk forward
                        while turning the camera. Always release what you press.
   key_up            -- {"text": chord}. Releases a key_down.
   mouse_move_rel    -- {"dx": px, "dy": px, "steps": 1}. Move BY a delta rather than
                        to a position, in screenshot pixels. Positive dx is right,
-                       positive dy is down. See POINTER-LOCKED APPS below.
+                       positive dy is down. THE LAST RESORT, not the default: if you
+                       can see what you want to look at, `aim` at it instead. See
+                       POINTER-LOCKED APPS below.
   aim               -- {"coordinate": [x, y]}. Turn the view so that whatever is at
                        that screenshot pixel ends up on the crosshair. THIS IS THE
                        ONE TO USE IN A 3D GAME: say where the thing is, not how far
@@ -142,7 +150,25 @@ symptoms of using the wrong action are specific and worth recognising:
     what you do. That is how you know the pointer is locked.
   - `mouse_move` to a coordinate turns the view, but repeating the identical
     `mouse_move` turns it again by the same amount instead of doing nothing.
-Once you see either, switch to `mouse_move_rel` and stop reasoning about position.
+Once you see either, stop using `mouse_move`. What to use instead depends on one
+question only -- CAN YOU SEE THE THING YOU WANT TO LOOK AT?
+
+  - YOU CAN SEE IT  -> `aim` with its coordinate. This is almost always the case,
+    and it is one call. Say WHERE THE THING IS; do not work out how far to turn.
+    `aim` is not a convenience over `mouse_move_rel`, it is the correct action:
+    it measures the sensitivity from the screen itself, which you cannot do by
+    guessing.
+  - YOU CANNOT SEE IT  -> `look` with an angle, to bring it into view ("turn
+    around" is yaw 180), then `aim` once it is on screen.
+  - NEITHER            -> `mouse_move_rel`, and only then. It is the raw primitive:
+    it moves the mouse by a number you invented, with nothing checking that number
+    against the world.
+
+The failure this prevents is specific and it is expensive. A guessed delta
+overshoots, so the next call is a correction, which overshoots the other way, and
+each one of those is a full round trip spent not playing. If you find yourself
+sending a `mouse_move_rel` in the opposite direction to the last one, that is the
+mistake happening -- switch to `aim` rather than narrowing in.
 
 AIMING. Use `aim` and do not compute mouse deltas by hand. The first `aim` turns
 the view slightly, measures how far the image actually moved, works out the

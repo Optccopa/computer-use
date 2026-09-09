@@ -116,11 +116,20 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         return ActionResult(name, text="OK")
 
     if name == "mouse_move_rel":
-        dx, dy = session.scale_delta(float(params.get("dx", 0)), float(params.get("dy", 0)))
+        # Kept before scaling: these are the numbers the model wrote, in screenshot
+        # space. Quoting the scaled native ones back at it names a move it never
+        # made -- it asked for 100 and would be shown 188.
+        asked = (float(params.get("dx", 0)), float(params.get("dy", 0)))
+        dx, dy = session.scale_delta(*asked)
         was_on = session.cursor_is_on_display()
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
         session.confine_cursor(was_on)
-        return ActionResult(name, text=f"OK (moved {dx:+d}, {dy:+d} native pixels)")
+        # Recorded after the move, so a rejected one is not counted as a turn that
+        # happened. The hint is advisory: looking around legitimately reverses too.
+        hint = session.note_relative_move(*asked)
+        return ActionResult(
+            name, text=f"OK (moved {dx:+d}, {dy:+d} native pixels){hint}"
+        )
 
     if name == "aim":
         x, y = _coordinate(params["coordinate"], "coordinate")
@@ -141,6 +150,9 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         was_on = session.cursor_is_on_display()
         _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
         session.confine_cursor(was_on)
+        # An aim is a measured turn, not a guess, so it must not leave a delta behind
+        # for the next relative move to be accused of reversing.
+        session.forget_relative_move()
         return ActionResult(
             name,
             text=f"OK (turned {dx:+d}, {dy:+d} native pixels to bring ({x:g}, {y:g}) "

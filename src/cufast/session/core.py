@@ -66,7 +66,47 @@ class Session(CoordinateMixin, AimingMixin):
         # acts on a zoom is usually in a later call than the zoom itself -- the model
         # looks, decides, then acts.
         self.last_zoom: Screenshot | None = None
+        # The previous relative move, to recognise a correction. Observed in a real
+        # 25-minute session: 25 mouse_move_rel calls, many of them hunting -- turn
+        # 150 right, then 180 back, then 30 back again -- with each correction a
+        # separate round trip. Prose telling it to use `aim` was already in the tool
+        # description and was not enough; this says it at the moment it happens.
+        self._last_rel: tuple[float, float] | None = None
         self._refresh_reference()
+
+    def note_relative_move(self, dx: float, dy: float) -> str:
+        """Records a relative move, and names the overshoot-and-correct pattern.
+
+        A reversal on the dominant axis means the previous delta was wrong: it went
+        too far, or the wrong way. That is the exact shape of guessing, and every
+        correction costs a whole round trip. Returns text to append to the result,
+        or "" when there is nothing to say -- a reversal is normal when genuinely
+        looking around, so this advises rather than refuses.
+        """
+        previous = self._last_rel
+        self._last_rel = (dx, dy)
+        if previous is None:
+            return ""
+        px, py = previous
+        # The dominant axis of the earlier move is the one it was actually trying to
+        # correct; a reversal on the incidental axis is just noise.
+        if abs(px) >= abs(py):
+            reversed_axis = px != 0 and dx != 0 and (px > 0) != (dx > 0)
+        else:
+            reversed_axis = py != 0 and dy != 0 and (py > 0) != (dy > 0)
+        if not reversed_axis:
+            return ""
+        return (
+            f" [this reverses your last move ({px:+g}, {py:+g}), so that one "
+            "overshot. Correcting by hand costs a round trip per attempt and tends "
+            "to oscillate. If you can see what you want centred, use `aim` with its "
+            "coordinate instead -- it measures the sensitivity from the screen and "
+            "gets there in one call]"
+        )
+
+    def forget_relative_move(self) -> None:
+        """Drops the recorded delta, so the next relative move starts clean."""
+        self._last_rel = None
 
     def mark_delivered(self, shot: Screenshot) -> bool:
         """True when this image is new to the model, and records it as delivered.

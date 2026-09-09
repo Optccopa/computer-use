@@ -342,6 +342,24 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
         "        self.last_zoom = zoomed",
         "        self.last_zoom = None",
     ),
+    (
+        "a correcting relative move is no longer pointed out",
+        "src/cufast/session/core.py",
+        "        if not reversed_axis:",
+        "        if True:",
+    ),
+    (
+        "the overshoot hint quotes native pixels the model never wrote",
+        "src/cufast/actions/execute.py",
+        "        hint = session.note_relative_move(*asked)",
+        "        hint = session.note_relative_move(dx, dy)",
+    ),
+    (
+        "aim no longer clears the hunt, so it gets blamed for a correction",
+        "src/cufast/actions/execute.py",
+        "        session.forget_relative_move()",
+        "        pass",
+    ),
 ]
 
 NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
