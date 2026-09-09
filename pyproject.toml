@@ -18,6 +18,7 @@ dev = [
     "pytest>=8",
     "anyio>=4",
     "ruff>=0.9",
+    "pytest-cov>=6",
 ]
 
 # The agent loop talks to the Claude API; the MCP server does not, and most

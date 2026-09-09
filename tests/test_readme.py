@@ -23,19 +23,14 @@ def section(title: str) -> str:
     return body.split("\n## ")[0]
 
 
-class TestTheActionTable:
-    def test_every_action_is_listed(self):
-        listed = set(re.findall(r"`([a-z_]+)`", section("Actions")))
-        assert not [name for name in ACTION_NAMES if name not in listed]
-
-    def test_it_lists_nothing_that_is_not_an_action(self):
-        # Catches a renamed action leaving its old name behind, which reads as a
-        # working action and fails only when someone tries it.
-        rows = [
-            line for line in section("Actions").splitlines() if line.startswith("| `")
-        ]
-        named = {n for row in rows for n in re.findall(r"`([a-z_]+)`", row.split("|")[1])}
-        assert not named - set(ACTION_NAMES)
+class TestEveryActionNameMentionedIsReal:
+    def test_no_readme_action_has_been_renamed_away(self):
+        """The README no longer tabulates the actions, but it names several in
+        prose and in the example. A name that no longer exists reads as a working
+        action and fails only when someone types it."""
+        prose = README.read_text(encoding="utf-8")
+        quoted = set(re.findall(r'"action": "([a-z_]+)"', prose))
+        assert quoted <= set(ACTION_NAMES), quoted - set(ACTION_NAMES)
 
 
 class TestTheConfigurationTable:

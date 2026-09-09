@@ -42,6 +42,11 @@ jobs:
       - name: Lint
         run: uv run ruff check src tests scripts
 
+      - name: Check the README badges are still true
+        # A badge with a number in it is a claim. The hand-typed ones went stale
+        # within a single commit, so they are measured and checked instead.
+        run: uv run python scripts/badges.py --check
+
       - name: Test
         # The desktop-marked tests need a real display session and a system-wide
         # keyboard hook. A runner has neither in any meaningful sense, so they are
