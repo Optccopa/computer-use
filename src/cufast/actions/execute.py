@@ -33,6 +33,17 @@ def capture_result(session: Session, label: str, shot: Screenshot,
     worth about 777 visual tokens a call, and it is also the only thing that teaches
     the model that looking again was not worth a round trip.
     """
+    # Which screen this is, whenever there is more than one. Without it the only way
+    # to learn another display exists is to think to ask, and a model hunting for a
+    # window that is simply on the other monitor has no reason to suspect that -- it
+    # searches the screen it can see, does not find the thing, and concludes the
+    # thing is not there. One short marker on every image is the cheapest way to make
+    # the second display a fact it already has rather than one it has to go looking
+    # for. Silent on a single-monitor machine, where it would be noise.
+    count = session.display_count
+    if count > 1:
+        label = f"{label} (display {session.screen.index} of {count} attached)"
+
     if not session.mark_delivered(shot):
         return ActionResult(label, text=SCREEN_UNCHANGED + note)
     return ActionResult(label, image=shot, text=note or None)

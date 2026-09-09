@@ -124,6 +124,16 @@ class Session(CoordinateMixin, AimingMixin):
         return self._refresh_reference()[1]
 
     @property
+    def display_count(self) -> int:
+        """How many displays are attached.
+
+        Read live rather than cached: enumeration is 0.010 ms against a 2.6 ms
+        capture, so it is free, and a monitor plugged in mid-session is exactly the
+        moment the model most needs to know there is somewhere else to look.
+        """
+        return len(_native.list_displays())
+
+    @property
     def using_dxgi(self) -> bool:
         return self.screen.using_dxgi
 

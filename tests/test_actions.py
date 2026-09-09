@@ -11,6 +11,11 @@ from cufast.config import Config
 from cufast.session import ActionError
 
 
+def action_of(result) -> str:
+    """The action name out of a result label, dropping any capture suffix."""
+    return result.label.split(" (")[0]
+
+
 class TestSingleActions:
     def test_click_moves_then_clicks(self, session, fake_input):
         execute(session, "left_click", {"coordinate": [512, 288]})
@@ -150,12 +155,16 @@ class TestBatch:
 
     def test_appends_screenshot_by_default(self, session):
         results = run_batch(session, [{"action": "left_click"}])
-        assert results[-1].label == "screenshot"
+        # A capture label carries a "(display N of M attached)" suffix on a
+        # multi-monitor machine, so compare the action name rather than the whole
+        # string: asserting the exact label made this pass on a one-monitor CI
+        # runner and fail on a developer machine with two.
+        assert action_of(results[-1]) == "screenshot"
         assert results[-1].image is not None
 
     def test_does_not_double_up_a_trailing_screenshot(self, session):
         results = run_batch(session, [{"action": "left_click"}, {"action": "screenshot"}])
-        assert [r.label for r in results] == ["left_click", "screenshot"]
+        assert [action_of(r) for r in results] == ["left_click", "screenshot"]
 
     def test_trailing_zoom_also_counts_as_a_capture(self, session):
         results = run_batch(

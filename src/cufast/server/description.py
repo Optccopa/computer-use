@@ -37,8 +37,21 @@ A screenshot is appended automatically after the last action unless the call alr
 ends with `screenshot` or `zoom`, or you pass auto_screenshot=false. That saves the
 round trip you would otherwise spend asking what happened.
 
-Set `display` to control a different monitor (see screen_info for what is attached).
-It persists for later calls until you change it again.
+CANNOT FIND SOMETHING? CHECK THE OTHER SCREEN. This machine may have more than one
+display, and you are only ever looking at one of them. Every screenshot is labelled
+with which one and how many are attached, so if that says "display 0 of 2" then
+there is a whole second screen you have not seen. A window that is not where you
+expect is far more often on another monitor than closed.
+
+  - `screen_info` lists every display. Passing it `display: N` describes that one
+    WITHOUT switching to it, so it costs you nothing to look up what is out there.
+  - Passing `display: N` to THIS tool switches to that monitor and stays there, so
+    the next screenshot is of that screen. Switch back the same way when you are
+    done. Coordinates are always in the space of the screenshot you were given, so
+    they mean different things on different displays -- take a screenshot after
+    switching rather than reusing a coordinate from the previous screen.
+
+Do this before telling the user something is missing.
 
 COORDINATES. Every coordinate is in the pixel space of the screenshot you were given,
 origin top-left. That is a scaled-down view of the display, so never use the native

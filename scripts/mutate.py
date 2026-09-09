@@ -250,6 +250,31 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
         "        if given:\n            raise ActionError(",
         "        if False:\n            raise ActionError(",
     ),
+    # -- finding a thing that is on the other monitor -------------------------------
+    (
+        "screenshots stop saying which display they are",
+        "src/cufast/actions/execute.py",
+        "    count = session.display_count\n    if count > 1:",
+        "    count = session.display_count\n    if False:",
+    ),
+    (
+        "the display marker appears on a single-monitor machine too",
+        "src/cufast/actions/execute.py",
+        "    if count > 1:\n        label = f\"{label} (display",
+        "    if count >= 1:\n        label = f\"{label} (display",
+    ),
+    (
+        "the guidance to check the other screen is gone",
+        "src/cufast/server/description.py",
+        "CANNOT FIND SOMETHING? CHECK THE OTHER SCREEN.",
+        "THERE MAY BE OTHER SCREENS.",
+    ),
+    (
+        "the agent is no longer told to look at the other screen",
+        "src/cufast/agent/prompt.py",
+        "IF YOU CANNOT FIND SOMETHING, LOOK AT THE OTHER SCREEN.",
+        "THERE MAY BE OTHER SCREENS.",
+    ),
     # -- the agent loop ------------------------------------------------------------
     (
         "the loop stops feeding the opening screen",
