@@ -7,10 +7,10 @@
 #include <mutex>
 #include <thread>
 
-#include "capture.hpp"
-#include "hotkey.hpp"
-#include "image.hpp"
-#include "input.hpp"
+#include "capture/capture.hpp"
+#include "hotkey/hotkey.hpp"
+#include "image/image.hpp"
+#include "input/input.hpp"
 
 namespace nb = nanobind;
 using namespace cufast;

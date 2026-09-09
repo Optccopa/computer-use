@@ -1,4 +1,4 @@
-#include "hotkey.hpp"
+#include "hotkey/hotkey.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -7,7 +7,7 @@
 #include <string>
 #include <thread>
 
-#include "input.hpp"
+#include "input/input.hpp"
 
 namespace cufast {
 namespace {

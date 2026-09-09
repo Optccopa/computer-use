@@ -1,4 +1,4 @@
-#include "input.hpp"
+#include "input/input.hpp"
 
 #include <algorithm>
 #include <atomic>

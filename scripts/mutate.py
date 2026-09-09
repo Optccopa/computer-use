@@ -368,6 +368,27 @@ def _emergency_restore() -> None:
     restore(rel, original)
 
 
+# Present only while a run is in flight. This script rewrites tracked source in
+# place, so anything else touching the tree at the same time -- another run, a build,
+# a test, a commit -- is reading a file that is deliberately wrong. That has happened
+# three times now, each time because the run was in the background and looked
+# finished. The file makes "is a mutation live right now?" a question with an answer.
+LOCK = REPO / ".mutation-in-progress"
+
+
+def _release_lock() -> None:
+    LOCK.unlink(missing_ok=True)
+
+
+def _claim_lock() -> bool:
+    try:
+        LOCK.touch(exist_ok=False)
+    except FileExistsError:
+        return False
+    atexit.register(_release_lock)
+    return True
+
+
 def _install_cleanup() -> None:
     atexit.register(_emergency_restore)
     # SystemExit rather than an immediate restore: raising it here unwinds the normal
@@ -555,6 +576,11 @@ def main() -> int:
                         help="also mutate the C++ (rebuilds each time; slow)")
     parser.add_argument("--only", type=int, help="run a single mutation by index")
     args = parser.parse_args()
+
+    if not _claim_lock():
+        print(f"A mutation run is already in progress ({LOCK.name} exists).")
+        print("Wait for it, or delete that file if you are sure nothing is running.")
+        return 1
 
     _install_cleanup()
 

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "common.hpp"
+#include "core/common.hpp"
 
 namespace cufast {
 

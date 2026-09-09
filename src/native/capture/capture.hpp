@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "common.hpp"
+#include "core/common.hpp"
 
 namespace cufast {
 
