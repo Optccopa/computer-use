@@ -119,6 +119,46 @@ class TestTheLoopStops:
         assert "3 turns" in result.hit_limit
         assert len(a._client.requests) == 3
 
+    def test_an_already_stopped_desktop_is_never_asked_about(self, agent,
+                                                             no_real_kill_switch):
+        """Stopping has to stop the loop, not just be noticed on the way out.
+
+        run() also checks the switch after the loop, so asserting only that
+        stopped_by_user ends up True passes even with the in-loop break deleted --
+        the agent would call the API for all forty turns first. Mutation testing is
+        what surfaced that. Counting the requests is what holds it.
+        """
+        from cufast import _native
+
+        a = agent([[tool_use({"action": "cursor_position"})] for _ in range(5)])
+        _native.input_blocked = lambda: True
+        try:
+            result = a.run("go")
+        finally:
+            _native.input_blocked = lambda: False
+        assert result.stopped_by_user
+        assert a._client.requests == [], "asked the model after the user said stop"
+
+    def test_it_stops_at_the_turn_the_switch_is_hit(self, agent, no_real_kill_switch):
+        from cufast import _native
+
+        a = agent([[tool_use({"action": "cursor_position"}, f"t{i}")] for i in range(20)])
+        a.max_turns = 20
+        turns = {"n": 0}
+
+        def blocked_after_first_turn():
+            # False for the loop's first look, True from then on.
+            turns["n"] += 1
+            return turns["n"] > 1
+
+        _native.input_blocked = blocked_after_first_turn
+        try:
+            result = a.run("go")
+        finally:
+            _native.input_blocked = lambda: False
+        assert result.stopped_by_user
+        assert len(a._client.requests) == 1, "kept going after the user said stop"
+
     def test_the_kill_switch_ends_it(self, agent, no_real_kill_switch):
         from cufast import _native
 
