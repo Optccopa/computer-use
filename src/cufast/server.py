@@ -404,7 +404,14 @@ def build_server(config: Config | None = None) -> MCPServer:
         blocks: list[TextContent | ImageContent] = []
         for index, result in enumerate(results):
             if result.image is not None:
-                blocks.append(TextContent(type="text", text=f"[{index}] {result.label}:"))
+                # A capture can carry a note as well as the image -- "you did not
+                # need to ask for this" rides along with the picture it describes.
+                # Dropping it here would silently discard the only thing that stops
+                # the next call being another screenshot request.
+                note = f" {result.text}" if result.text else ""
+                blocks.append(
+                    TextContent(type="text", text=f"[{index}] {result.label}:{note}")
+                )
                 blocks.append(
                     ImageContent(
                         type="image",

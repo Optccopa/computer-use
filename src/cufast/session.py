@@ -70,6 +70,14 @@ class Screenshot:
     width: int
     height: int
     media_type: str
+    # Hash of the decoded pixels, computed natively during the capture and free to
+    # carry. Two captures of the same region with the same hash are the same image,
+    # which is what lets a static screen cost text instead of ~777 visual tokens.
+    content_hash: int = 0
+    # Which part of the display this is, monitor-local. Part of the identity: a zoom
+    # and a full screenshot are different pictures even in the vanishing case where
+    # their hashes collide.
+    region: tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 def _span(index: int, ref: int, native: int) -> tuple[int, int]:
@@ -121,7 +129,33 @@ class Session:
         # made every pitch wrong on those, from the very first aim, with nothing
         # raising. None means "not measured, use the horizontal one".
         self.aim_ratio_y: float | None = None
+        # Identity of the last image actually handed to the model. A desktop is
+        # static most of the time an agent is looking at it, and re-sending a frame
+        # it already has costs a full image of context to say nothing -- which is
+        # also what teaches it that asking again is worth doing.
+        self._delivered: tuple[tuple[int, int, int, int], int] | None = None
         self._refresh_reference()
+
+    def mark_delivered(self, shot: Screenshot) -> bool:
+        """True when this image is new to the model, and records it as delivered.
+
+        The first capture is always new: a model that has been told "unchanged"
+        before it has ever seen the screen has been told nothing at all.
+        """
+        identity = (shot.region, shot.content_hash)
+        if self._delivered == identity:
+            return False
+        self._delivered = identity
+        return True
+
+    def forget_delivered(self) -> None:
+        """Drops the record, so the next capture is sent whatever it looks like.
+
+        Used when the model's view of the screen is no longer trustworthy -- a
+        display switch, say -- where "unchanged" would be true of the pixels and a
+        lie about what it is looking at.
+        """
+        self._delivered = None
 
     def _refresh_reference(self) -> tuple[int, int]:
         """Recomputes the screenshot size whenever the display mode changes.
@@ -572,7 +606,11 @@ class Session:
         # step with what the model actually received.
         self._native_size = (self.screen.width, self.screen.height)
         self._ref = (shot.width, shot.height)
-        return Screenshot(shot.data, shot.width, shot.height, "image/jpeg")
+        return Screenshot(
+            shot.data, shot.width, shot.height, "image/jpeg",
+            content_hash=shot.content_hash,
+            region=(shot.src_x, shot.src_y, shot.src_w, shot.src_h),
+        )
 
     def wait_for_change(self, timeout_seconds: float) -> float | None:
         """Blocks until the screen changes. Returns milliseconds, or None on timeout.
@@ -636,4 +674,8 @@ class Session:
             rw=w,
             rh=h,
         )
-        return Screenshot(shot.data, shot.width, shot.height, "image/jpeg")
+        return Screenshot(
+            shot.data, shot.width, shot.height, "image/jpeg",
+            content_hash=shot.content_hash,
+            region=(shot.src_x, shot.src_y, shot.src_w, shot.src_h),
+        )

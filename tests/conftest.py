@@ -43,6 +43,12 @@ class FakeScreen:
         self.using_dxgi = True
         self.calls: list[dict] = []
         self.raise_on_grab: Exception | None = None
+        # A real desktop almost never hands back two byte-identical frames -- a
+        # caret blinks, a clock ticks -- so the default here is a hash that moves.
+        # Set static=True to model a genuinely frozen screen, which is what the
+        # unchanged-frame suppression is about.
+        self.static = False
+        self._hash = 0
         # Pretend view: how far the camera has been turned, and how much mouse it
         # takes to move the image one profile sample.
         self._panned = 0
@@ -89,6 +95,8 @@ class FakeScreen:
         src_w = self.width if rw < 0 else rw
         src_h = self.height if rh < 0 else rh
         dst_w, dst_h = _native.plan_fit(src_w, src_h, kwargs["max_w"], kwargs["max_h"], False)
+        if not self.static:
+            self._hash += 1
         return SimpleNamespace(
             data=b"\xff\xd8\xff\xd9",  # the smallest thing shaped like a JPEG
             width=dst_w,
@@ -98,7 +106,7 @@ class FakeScreen:
             src_w=src_w,
             src_h=src_h,
             frame_id=1,
-            content_hash=0,
+            content_hash=self._hash,
             dxgi=True,
         )
 

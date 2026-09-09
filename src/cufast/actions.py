@@ -135,12 +135,44 @@ def batch_from_call(
     )
 
 
+# Sent in place of an image the model already has. Worded as "you already have it"
+# rather than "no image": the point is to stop the next call being another look, and
+# a bare "unchanged" reads like a failed capture worth retrying.
+SCREEN_UNCHANGED = (
+    "Screen unchanged -- pixel for pixel identical to the last image you were given, "
+    "so no new one was sent. You already have the current state of the display; act "
+    "on it rather than looking again."
+)
+
+# Added to a capture the caller did not need to ask for. Every call returns a
+# screenshot on its own, so an explicit one buys nothing but the round trip it took
+# to request it.
+CAPTURE_WAS_FREE = (
+    " (you did not need to ask for this -- every call returns a screenshot of the "
+    "display when it is done, so put the actions you want in the call instead)"
+)
+
+
 @dataclass
 class ActionResult:
     label: str
     text: str | None = None
     image: Screenshot | None = None
     is_error: bool = False
+
+
+def capture_result(session: Session, label: str, shot: Screenshot,
+                   note: str = "") -> ActionResult:
+    """One capture, as either an image or the news that it is the same image.
+
+    A desktop is static for most of the time an agent spends looking at it, and an
+    identical frame costs a full image of context to say nothing. Suppressing it is
+    worth about 777 visual tokens a call, and it is also the only thing that teaches
+    the model that looking again was not worth a round trip.
+    """
+    if not session.mark_delivered(shot):
+        return ActionResult(label, text=SCREEN_UNCHANGED + note)
+    return ActionResult(label, image=shot, text=note or None)
 
 
 # Actions after which the UI needs a moment before the next action is meaningful.
@@ -406,10 +438,13 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
     name = canonical(name)
 
     if name == "screenshot":
-        return ActionResult(name, image=session.screenshot())
+        # Free either way; say so, because an explicit screenshot is a whole
+        # round trip spent asking for something that arrives on its own.
+        return capture_result(session, name, session.screenshot(), CAPTURE_WAS_FREE)
 
     if name == "zoom":
-        return ActionResult(name, image=session.zoom([float(v) for v in params["region"]]))
+        shot = session.zoom([float(v) for v in params["region"]])
+        return capture_result(session, name, shot)
 
     if name in _CLICK_BUTTONS:
         button, clicks = _CLICK_BUTTONS[name]
@@ -705,7 +740,7 @@ def run_batch(
         if session.config.settle_ms and last in _MUTATING:
             time.sleep(session.config.settle_ms / 1000.0)
         try:
-            results.append(ActionResult("screenshot", image=session.screenshot()))
+            results.append(capture_result(session, "screenshot", session.screenshot()))
         except ACTION_FAILURES as exc:
             # Must not escape: the batch already ran, and losing every result because
             # the trailing capture failed would leave the model unable to tell what
