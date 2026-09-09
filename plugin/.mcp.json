@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cufast": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/cufast-mcp.cmd",
+      "args": [],
+      "env": {}
+    }
+  }
+}

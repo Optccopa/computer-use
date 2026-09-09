@@ -24,6 +24,7 @@ int cmd_shot(const Args& args);
 int cmd_watch(const Args& args);
 int cmd_bench(const Args& args);
 int cmd_input(const Args& args);
+int cmd_hook(const Args& args);
 
 // Shared argument helpers. Deliberately tiny: this parses a handful of flags, and
 // pulling in a parser library for that would be more dependency than program.

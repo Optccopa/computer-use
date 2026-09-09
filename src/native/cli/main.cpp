@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
         if (command == "watch") return cufast::cli::cmd_watch(args);
         if (command == "bench") return cufast::cli::cmd_bench(args);
         if (command == "input") return cufast::cli::cmd_input(args);
+        if (command == "hook") return cufast::cli::cmd_hook(args);
     } catch (const std::exception& e) {
         // Every failure in the core arrives as an exception carrying a message meant
         // to be read. Printing it beats a stack trace nobody can act on.

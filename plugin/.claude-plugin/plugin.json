@@ -1,0 +1,36 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "cufast",
+  "version": "0.1.0",
+  "description": "Drive this Windows desktop from Claude Code. Bundles the cufast MCP server and puts a live screenshot in front of the model before every turn.",
+  "author": {
+    "name": "Copa!"
+  },
+  "skills": ["./skills"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/cufast.exe hook SessionStart",
+            "timeout": 10,
+            "statusMessage": "Looking at the desktop..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/cufast.exe hook UserPromptSubmit",
+            "timeout": 10,
+            "statusMessage": "Refreshing the screen..."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -92,6 +92,18 @@ if(CUFAST_BUILD_CLI)
     src/native/cli/diagnose.cpp
     src/native/cli/capture_cmds.cpp
     src/native/cli/input_cmds.cpp
+    src/native/cli/hook_cmds.cpp
   )
   target_link_libraries(cufast PRIVATE cufast_core)
+
+  # The Claude Code plugin runs this binary as its hook, so the plugin needs a copy
+  # next to its manifest. Copied on every build rather than committed: a stale
+  # cufast.exe in plugin/bin would keep answering with last week's capture code
+  # while the source said otherwise, and that is exactly the kind of divergence
+  # nothing would report. plugin/bin/cufast.exe is gitignored for the same reason.
+  add_custom_command(TARGET cufast POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:cufast>
+            ${CMAKE_SOURCE_DIR}/plugin/bin/cufast.exe
+    COMMENT "Copying cufast.exe into the Claude Code plugin")
 endif()
