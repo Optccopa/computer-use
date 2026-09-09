@@ -250,6 +250,37 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
         "        if given:\n            raise ActionError(",
         "        if False:\n            raise ActionError(",
     ),
+    # -- the agent loop ------------------------------------------------------------
+    (
+        "the loop stops feeding the opening screen",
+        "src/cufast/agent/loop.py",
+        "        return [_image_block(shot)]",
+        "        return []",
+    ),
+    (
+        "the loop ignores its turn limit",
+        "src/cufast/agent/loop.py",
+        "            for _ in range(self.max_turns):",
+        "            for _ in range(1000):",
+    ),
+    (
+        "the loop no longer stops when the user does",
+        "src/cufast/agent/loop.py",
+        "                    result.stopped_by_user = True\n                    break",
+        "                    pass",
+    ),
+    (
+        "a crashed loop leaves the desktop holding keys",
+        "src/cufast/agent/loop.py",
+        "        finally:\n            self._disarm()",
+        "        finally:\n            pass",
+    ),
+    (
+        "the opening screenshot stops being counted",
+        "src/cufast/agent/loop.py",
+        "        return self.opening_images + sum(t.images for t in self.turns)",
+        "        return sum(t.images for t in self.turns)",
+    ),
     (
         "screen content is no longer framed as untrusted",
         "src/cufast/server.py",

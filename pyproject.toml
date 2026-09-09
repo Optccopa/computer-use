@@ -20,8 +20,15 @@ dev = [
     "ruff>=0.9",
 ]
 
+# The agent loop talks to the Claude API; the MCP server does not, and most
+# installs only ever want the server. Keeping the SDK optional means the common
+# case does not pull it in.
+[project.optional-dependencies]
+agent = ["anthropic>=1.4"]
+
 [project.scripts]
 cufast-mcp = "cufast.server:main"
+cufast-agent = "cufast.agent.cli:main"
 
 [tool.scikit-build]
 minimum-version = "0.10"

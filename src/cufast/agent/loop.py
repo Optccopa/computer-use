@@ -37,9 +37,15 @@ class Result:
     stopped_by_user: bool = False
     hit_limit: str = ""
 
+    # The frame handed over with the task itself, before the first turn. Counted
+    # separately because it does not belong to any turn -- leaving it out had a run
+    # against a static desktop report "0 screenshots sent" when it had sent one, and
+    # the whole point of this loop is that the number is honest.
+    opening_images: int = 0
+
     @property
     def images_sent(self) -> int:
-        return sum(t.images for t in self.turns)
+        return self.opening_images + sum(t.images for t in self.turns)
 
     @property
     def images_saved(self) -> int:
@@ -158,11 +164,13 @@ class Agent:
         client = self._ensure_client()
         tools = [computer_tool_schema()]
 
+        opening = self._current_screen()
+        result.opening_images = len(opening)
         messages: list[dict[str, Any]] = [
             {
                 "role": "user",
                 "content": [
-                    *self._current_screen(),
+                    *opening,
                     {"type": "text", "text": task},
                 ],
             }
