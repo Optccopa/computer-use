@@ -16,15 +16,18 @@ Fast, Vibecoded, Windows computer use for Claude Code. Screen capture and input 
 
 ## Speed
 
+Measured over stdio against the server as it ships, 1920x1080 into a 1024x576 frame, DXGI, quality 0.75.
+
 | Stage | Time |
 |---|---|
-| Capture 1920x1080 | ~1-3 ms |
-| Downscale to 1024x576 | ~4 ms |
-| JPEG encode q75 | ~2 ms |
-| **Full screenshot** | **~9 ms** |
-| MCP round trip, over stdio | ~15 ms |
+| A call that returns no image | ~1 ms |
+| Downscale and JPEG encode | ~2 ms |
+| Waiting for the compositor to present a frame | 0-16 ms |
+| **A call that returns a screenshot** | **~20 ms** |
 
-A model round trip takes about nine seconds, so the harness is under 2% of a session and the only lever that matters is making fewer calls. Hence batching.
+Almost all of that is the wait, not the work. `AcquireNextFrame` blocks until something on screen changes, and an idle desktop just runs out the clock and reuses the frame it already has. `CUFAST_CAPTURE_TIMEOUT_MS` is that clock.
+
+A model round trip takes about nine seconds, so the harness is well under 1% of a session and the only lever that matters is making fewer calls. Hence batching.
 
 ## Install
 

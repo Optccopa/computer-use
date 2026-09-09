@@ -50,11 +50,6 @@ def capture_result(session: Session, label: str, shot: Screenshot,
     return ActionResult(label, image=shot, text=note or None)
 
 
-# Actions after which the UI needs a moment before the next action is meaningful.
-# mouse_move is included because hovering is its whole purpose: without a settle the
-# screenshot that follows is the pre-hover frame, and the model concludes the tooltip
-
-
 def _turn(session: Session, dx: int, dy: int, params: dict[str, Any]) -> None:
     """Sends a relative move and keeps the cursor on the display it belongs to.
 

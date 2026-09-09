@@ -56,10 +56,6 @@ def batch_from_call(
     )
 
 
-# Sent in place of an image the model already has. Worded as "you already have it"
-# rather than "no image": the point is to stop the next call being another look, and
-
-
 def run_batch(
     session: Session,
     actions: list[dict[str, Any]],
