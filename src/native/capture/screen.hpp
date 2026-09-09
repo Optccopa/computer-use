@@ -52,6 +52,11 @@ public:
     int index() const;
     bool using_dxgi() const;
 
+    // Simulates the controlled display being unplugged. Exists because the
+    // real trigger is a monitor leaving the system, and a harness that keeps
+    // serving its last frame after that is the failure worth a test.
+    void forget_display_for_test();
+
 private:
     mutable std::mutex mutex_;
     Capture capture_;

@@ -63,6 +63,17 @@ public:
 
     const MonitorInfo& monitor() const { return monitor_; }
     bool using_dxgi() const { return dxgi_ready_; }
+
+    // Pretends the display this object was built for has been unplugged, so the
+    // disappearance can be tested without asking anyone to pull a cable. There is
+    // no other way in: the condition is a monitor vanishing from the system.
+    void forget_display_for_test() {
+        monitor_.device_name = L"\\\\.\\CUFAST_GONE";
+        // ensure_geometry short-circuits when the layout looks unchanged, and
+        // nothing about the desktop actually moved here. Poison the guard so
+        // the next grab really does re-enumerate.
+        seen_monitor_count_ = -1;
+    }
     // Monotonically increasing; unchanged when grab() reused a cached frame.
     uint64_t frame_id() const { return frame_id_; }
 
@@ -129,6 +140,9 @@ private:
     // Set when duplication was re-established, so the next grab reseeds from GDI
     // rather than handing back the frame from before the disruption.
     bool needs_reseed_ = false;
+    // Set when the display this object controls is no longer attached. Grabbing
+    // then fails rather than returning the last frame from before it vanished.
+    bool display_gone_ = false;
     uint64_t frame_id_ = 0;
 };
 

@@ -474,6 +474,21 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         'if (event != "SessionStart" && event != "UserPromptSubmit") {',
         "if (false) {",
     ),
+    (
+        # The bug as it shipped: an unplugged display was noticed and then ignored,
+        # so the cached frame from before it vanished was served for the life of the
+        # process while the harness reported "screen unchanged".
+        "an unplugged display goes back to being served from cache",
+        "src/native/capture/capture.cpp",
+        "    display_gone_ = true;",
+        "    display_gone_ = false;",
+    ),
+    (
+        "a lost display stops failing the grab",
+        "src/native/capture/capture.cpp",
+        "    if (display_gone_) {",
+        "    if (false) {",
+    ),
 ]
 
 

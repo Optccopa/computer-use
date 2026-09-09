@@ -70,6 +70,7 @@ void Capture::ensure_geometry(bool force) {
             candidate.width() != width_ || candidate.height() != height_;
         const bool moved = !same_rect(candidate.rect, monitor_.rect);
         monitor_ = candidate;
+        display_gone_ = false;
         if (resized) {
             init_dib(monitor_.width(), monitor_.height());
             // The duplication surface is tied to the old mode.
@@ -83,12 +84,30 @@ void Capture::ensure_geometry(bool force) {
         }
         return;
     }
-    // The display this object was built for is gone. Keep serving the last frame
-    // rather than throwing from what the caller thinks is a screenshot.
+    // The display this object was built for is gone.
+    //
+    // This used to return here and change nothing, which was the worst of the
+    // options available. dxgi_ready_ stayed true, so every later grab kept asking a
+    // duplication object for a monitor that no longer exists; it timed out, which
+    // reads as "the screen is idle", and the cached frame from before the unplug was
+    // served instead -- for as long as the process lived. Nothing said so. The
+    // content hash matched every time, so the harness reported "screen unchanged"
+    // and the model was told an hour-old desktop was current. Coordinates measured
+    // off it were coordinates on a display that was gone.
+    //
+    // Failing is better than that. A screenshot that throws is a problem the caller
+    // can see and act on; a screenshot that quietly shows last hour is not.
+    teardown_dxgi();
+    display_gone_ = true;
 }
 
 FrameView Capture::grab(bool draw_cursor, int timeout_ms) {
     ensure_geometry();
+    if (display_gone_) {
+        throw Error("the display this harness was controlling is no longer attached, "
+                    "so there is nothing to capture. Call screen_info to see which "
+                    "displays exist now, then pass `display` to move to one of them.");
+    }
     maybe_retry_dxgi();
 
     // CreateDIBSection requires a flush before the bitmap bits are touched through

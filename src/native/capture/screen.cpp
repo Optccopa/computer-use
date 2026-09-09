@@ -154,6 +154,11 @@ uint64_t Screen::sample_hash(int grid_w, int grid_h, int timeout_ms) {
     // because the Python side funnels every native call onto one worker thread,
     // which is a property of the caller rather than of this class.
 
+void Screen::forget_display_for_test() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    capture_.forget_display_for_test();
+}
+
 int Screen::width() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return capture_.monitor().width();

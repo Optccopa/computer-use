@@ -110,7 +110,14 @@ NB_MODULE(_native, m) {
         .def_prop_ro("origin_y", [](Screen& s) { nb::gil_scoped_release r; return s.origin_y(); })
         .def_prop_ro("index", [](Screen& s) { nb::gil_scoped_release r; return s.index(); })
         .def_prop_ro("using_dxgi",
-                     [](Screen& s) { nb::gil_scoped_release r; return s.using_dxgi(); });
+                     [](Screen& s) { nb::gil_scoped_release r; return s.using_dxgi(); })
+        // Simulates the controlled monitor being unplugged. The real trigger is a
+        // display leaving the system, so without a seam the only way to exercise it
+        // is to pull a cable -- and the failure it guards against is silent.
+        .def("_forget_display", [](Screen& s) {
+            nb::gil_scoped_release r;
+            s.forget_display_for_test();
+        });
 
     // Exposed so the Python coordinate mapping uses the exact same fit the encoder
     // used, rather than a second copy of the rounding rules that could drift.
