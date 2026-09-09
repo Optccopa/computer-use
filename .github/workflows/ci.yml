@@ -11,6 +11,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Only so the badge step can push the number it measured back to main. Every
+# other step here reads. A pull request from a fork gets a read-only token
+# whatever this says, which is why that step is also gated on the branch.
+permissions:
+  contents: write
+
 jobs:
   test:
     # Windows only, and not a portability oversight: the whole project is DXGI,
@@ -47,4 +53,46 @@ jobs:
         # keyboard hook. A runner has neither in any meaningful sense, so they are
         # run locally instead -- skipping them here beats asserting something that
         # does not mean anything.
-        run: uv run pytest -q -m "not desktop"
+        #
+        # --junitxml because the badge below needs the counts, and parsing pytest's
+        # human summary is guessing at a format that is allowed to change.
+        run: uv run pytest -q -m "not desktop" --junitxml=results.xml
+
+      - name: Publish the test count
+        # always(), so a run that fails still publishes the number that failed --
+        # a badge that only updates when everything passes is stuck showing the
+        # last good day, which is worse than showing nothing.
+        #
+        # Nothing hosts a test count for you the way PyPI hosts a version, so this
+        # writes the shields endpoint the README points at. Only from main, and
+        # only when the number moved. [skip ci] stops it triggering itself.
+        if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, pathlib, xml.etree.ElementTree as ET
+          root = ET.parse("results.xml").getroot()
+          suite = root if root.tag == "testsuite" else root[0]
+          # Skips are excluded from the total: a test skipped for want of a real
+          # desktop did not fail, and counting it would make the badge read worse
+          # the more careful the suite is about what it refuses to fake.
+          total = int(suite.get("tests", 0)) - int(suite.get("skipped", 0))
+          bad = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
+          passing = total - bad
+          out = pathlib.Path(".github/badges")
+          out.mkdir(parents=True, exist_ok=True)
+          (out / "tests.json").write_text(json.dumps({
+              "schemaVersion": 1,
+              "label": "tests",
+              "message": f"{passing}/{total} passing",
+              "color": "brightgreen" if passing == total else "red",
+          }, indent=2) + "\n")
+          print(f"{passing}/{total} passing")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/badges/tests.json
+          git diff --cached --quiet || {
+            git commit -m "chore: test count [skip ci]"
+            git push
+          }

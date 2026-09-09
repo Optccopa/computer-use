@@ -8,6 +8,7 @@ Fast Windows computer use for Claude Code. Screen capture and input injection in
 
 [![CI](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml/badge.svg)](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml)
 [![Linting](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Optccopa/computer-use/main/.github/badges/tests.json)](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml)
 [![coverage 92%](https://img.shields.io/badge/coverage-92%25-brightgreen)](tests/)
 [![mutations 61 caught](https://img.shields.io/badge/mutations-61%20caught-brightgreen)](scripts/mutate.py)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](CMakeLists.txt)
