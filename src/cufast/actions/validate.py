@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from cufast.actions.limits import (
+    MAX_CLIPBOARD_CHARS,
     MAX_DURATION_SECONDS,
     MAX_SCROLL_AMOUNT,
     MAX_TYPE_CHARS,
@@ -203,4 +204,15 @@ def validate(name: Any, params: dict[str, Any]) -> None:
 
     elif name in ("wait", "wait_for_change"):
         _duration(params)
+
+    elif name == "clipboard":
+        # Absent means read. An explicit empty string is a write that clears it,
+        # which is a different thing, so the two must not collapse into each other.
+        if params.get("text") is not None:
+            text = _text(params)
+            if len(text) > MAX_CLIPBOARD_CHARS:
+                raise ActionError(
+                    f"text is {len(text)} characters, over the {MAX_CLIPBOARD_CHARS} "
+                    "limit for one clipboard write."
+                )
 

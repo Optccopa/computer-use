@@ -28,6 +28,10 @@ INPUT_FUNCTIONS = (
     "key_down",
     "key_up",
     "held_keys",
+    # Faked for the same reason as the rest: the real clipboard is the developer's,
+    # and a test run must not overwrite whatever they had copied.
+    "clipboard_read",
+    "clipboard_write",
 )
 
 
@@ -125,6 +129,16 @@ class RecordingInput:
         # back to the window centre every frame, so relative movement turns the view
         # without the cursor ever travelling. An ordinary desktop does move it.
         self.pointer_locked = False
+        # Stands in for the system clipboard.
+        self.clipboard = ""
+
+    def clipboard_read(self):
+        self.events.append(("clipboard_read",))
+        return self.clipboard
+
+    def clipboard_write(self, text):
+        self.events.append(("clipboard_write", text))
+        self.clipboard = text
 
     def mouse_move(self, x, y):
         self.events.append(("mouse_move", x, y))

@@ -48,6 +48,7 @@ _ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     "key_down": frozenset({"text"}),
     "key_up": frozenset({"text"}),
     "wait": frozenset({"duration"}),
+    "clipboard": frozenset({"text"}),
     "wait_for_change": frozenset({"duration"}),
 }
 
@@ -75,6 +76,12 @@ _ALIASES = {
     "mouse_up": "left_mouse_up",
     "click": "left_click",
     "mouse_click": "left_click",
+    # One action reads or writes depending on whether `text` is present, so the
+    # separate names a model is likely to reach for both land on it correctly.
+    "clipboard_read": "clipboard",
+    "clipboard_write": "clipboard",
+    "get_clipboard": "clipboard",
+    "set_clipboard": "clipboard",
 }
 
 

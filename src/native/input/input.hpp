@@ -22,6 +22,11 @@ bool dpi_per_monitor_aware();
 void set_input_blocked(bool blocked);
 bool input_blocked();
 
+// Throws when the kill switch is engaged, carrying the wording the model is meant to
+// read. Public because the clipboard changes the user's machine without injecting
+// any input, and a stopped agent must not still be overwriting it.
+void check_input_allowed();
+
 // Releases every mouse button and modifier key that is currently down, bypassing
 // the kill switch. Called when the stop button is pressed: whatever the agent was
 // mid-way through, the desktop it hands back has to be usable. Never throws.

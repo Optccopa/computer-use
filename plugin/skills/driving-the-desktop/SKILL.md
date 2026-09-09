@@ -67,6 +67,30 @@ Use `zoom` with a region rather than guessing at file names, tab titles, status 
 or button labels. It re-captures that rectangle at full resolution. Coordinates do
 not change: after zooming, still click using full-screenshot coordinates.
 
+## Reading text exactly, and entering it exactly
+
+Zoom makes small text legible, but it is still you reading pixels out of a JPEG. For
+anything where one wrong character breaks it -- a file path, a URL, a hash, a version
+number, a stack trace, a command someone else wrote -- do not read harder. Select it,
+copy it, and read the clipboard:
+
+```
+{"actions": [{"action": "triple_click", "coordinate": [400, 210]},
+             {"action": "key", "text": "ctrl+c"},
+             {"action": "clipboard"}]}
+```
+
+One call, and the answer is the actual characters. Use `ctrl+a` to select everything
+in the focused control when a click cannot.
+
+Going the other way, `{"action": "clipboard", "text": "..."}` puts text on the
+clipboard and `ctrl+v` pastes it. Prefer that over `type` whenever the text is long,
+has unusual characters, or has to be exact: a paste is one keystroke and is not
+affected by the keyboard layout, while typing sends every character separately.
+
+A write replaces what was on the user's clipboard and does not put it back, so do not
+use it as scratch space.
+
 ## Waiting
 
 `wait` and `wait_for_change` are for different jobs, and picking the wrong one

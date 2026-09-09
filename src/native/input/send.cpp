@@ -14,9 +14,7 @@ std::atomic<bool> g_blocked{false};
 
 }  // namespace
 
-namespace detail {
-
-void check_allowed() {
+void check_input_allowed() {
     if (g_blocked.load(std::memory_order_relaxed)) {
         throw Error("STOPPED BY THE USER. They pressed the kill switch (Ctrl+Esc), which "
                     "blocks all mouse and keyboard input. Stop what you were doing, do not "
@@ -24,6 +22,10 @@ void check_allowed() {
                     "Ctrl+Esc again.");
     }
 }
+
+namespace detail {
+
+void check_allowed() { check_input_allowed(); }
 
 void push_key(std::vector<INPUT>& out, WORD vk, bool key_up) {
     INPUT in{};

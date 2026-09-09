@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "capture/screen.hpp"
+#include "clipboard/clipboard.hpp"
 #include "hotkey/hotkey.hpp"
 #include "image/image.hpp"
 #include "input/input.hpp"
@@ -314,6 +315,21 @@ NB_MODULE(_native, m) {
             hold_key(chord, seconds);
         },
         nb::arg("chord"), nb::arg("seconds"));
+
+    // Both release the GIL: opening the clipboard retries against another process
+    // holding it, so the call can block for a tenth of a second.
+    m.def("clipboard_read", []() {
+        nb::gil_scoped_release release;
+        return clipboard_read();
+    });
+
+    m.def(
+        "clipboard_write",
+        [](const std::string& text) {
+            nb::gil_scoped_release release;
+            clipboard_write(text);
+        },
+        nb::arg("text"));
 
     m.def("set_input_blocked", &set_input_blocked, nb::arg("blocked"));
     m.def("input_blocked", &input_blocked);

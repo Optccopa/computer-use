@@ -55,6 +55,17 @@ MAX_ACTIONS_PER_BATCH = 64
 MAX_TYPE_CHARS = 8000
 MAX_IMAGES_PER_BATCH = 10
 
+# How much of the clipboard one read returns, and how much one write accepts. About
+# five thousand tokens: enough for a config file, a stack trace or a long URL, small
+# enough that a stray ctrl+a on a large document cannot flood the context window.
+MAX_CLIPBOARD_CHARS = 20000
+
+# A clipboard read is the only action that puts text the model has not already paid
+# for into the reply, so the batch has to bound it the same way it bounds images.
+# Four is generous for the pattern that justifies more than one -- copy a field, read
+# it, copy the next -- and caps the worst case at eighty thousand characters.
+MAX_CLIPBOARD_READS_PER_BATCH = 4
+
 # The same cap applied across the whole batch, not just one action. The per-action
 # limit is justified by "typing occupies the harness for the whole time", but the
 # batch budget below only ever counted declared `duration`, so 64 actions of 8000

@@ -15,6 +15,7 @@ from cufast.actions.limits import (
     FLAT_PARAMS,
     MAX_ACTIONS_PER_BATCH,
     MAX_BATCH_DURATION_SECONDS,
+    MAX_CLIPBOARD_READS_PER_BATCH,
     MAX_IMAGES_PER_BATCH,
     MAX_TYPE_CHARS_PER_BATCH,
     NOT_EXECUTED,
@@ -138,6 +139,21 @@ def run_batch(
             "relative moves (`steps`) and typing all count toward this. The harness "
             "runs one batch at a time, so nothing else -- including screen_info -- "
             "can run while it does. Split it up."
+        )
+
+    # A read is a clipboard action with no `text`, and each one can return twenty
+    # thousand characters the model never sent. Bounded here for the same reason
+    # images are: it is reply size, and nothing downstream can give it back.
+    reads = sum(
+        1 for raw in actions
+        if canonical(raw.get("action")) == "clipboard" and raw.get("text") is None
+    )
+    if reads > MAX_CLIPBOARD_READS_PER_BATCH:
+        raise ActionError(
+            f"{reads} clipboard reads in one call, over the "
+            f"{MAX_CLIPBOARD_READS_PER_BATCH} limit. The clipboard only changes when "
+            "something copies to it, so reading it repeatedly in one batch returns "
+            "the same text at full cost each time."
         )
 
     images = sum(1 for raw in actions if canonical(raw.get("action")) in _CAPTURING)

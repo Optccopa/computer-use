@@ -36,6 +36,7 @@ add_library(cufast_core STATIC
   src/native/input/mouse.cpp
   src/native/input/keyboard.cpp
   src/native/hotkey/hotkey.cpp
+  src/native/clipboard/clipboard.cpp
 )
 
 # Includes are folder-qualified from src/native, so a file says where it comes from
