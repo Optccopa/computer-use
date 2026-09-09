@@ -23,6 +23,14 @@ struct MonitorInfo {
 
 std::vector<MonitorInfo> enumerate_monitors();
 
+// How long to wait before retrying duplication after it was refused. Refusals are
+// usually transient -- a UAC prompt owning the secure desktop, or the documented
+// four-concurrent-duplicator limit while a screen-share app is running -- so never
+// retrying would pin the process to the 15-30 ms GDI path for its whole lifetime.
+// Here rather than in a .cpp because the constructor and the retry live in
+// different translation units now and must agree on it.
+inline constexpr auto kDxgiRetryInterval = std::chrono::seconds(2);
+
 // Captures one monitor. Prefers DXGI Desktop Duplication (~1-3 ms, keeps the
 // D3D11 device and duplication object warm across calls) and falls back to a
 // GDI BitBlt (~15-30 ms) when duplication is unavailable: secure desktop, an

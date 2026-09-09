@@ -19,8 +19,18 @@ find_package(nanobind CONFIG REQUIRED)
 # in the capture were indistinguishable from the test's side.
 add_library(cufast_core STATIC
   src/native/capture/capture.cpp
-  src/native/image/image.cpp
-  src/native/input/input.cpp
+  src/native/capture/monitors.cpp
+  src/native/capture/dxgi.cpp
+  src/native/capture/gdi.cpp
+  src/native/capture/screen.cpp
+  src/native/image/scale.cpp
+  src/native/image/rotate.cpp
+  src/native/image/encode.cpp
+  src/native/image/analyze.cpp
+  src/native/input/keys.cpp
+  src/native/input/send.cpp
+  src/native/input/mouse.cpp
+  src/native/input/keyboard.cpp
   src/native/hotkey/hotkey.cpp
 )
 
