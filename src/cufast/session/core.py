@@ -12,6 +12,19 @@ from cufast.session.frames import Screenshot
 from cufast.session.geometry import CoordinateMixin
 
 
+def _as_screenshot(shot) -> Screenshot:
+    """The native capture record as the one the rest of the code passes around.
+
+    The region is carried across because it is part of the image's identity: a zoom
+    and a full frame are different pictures even when their pixels hash the same.
+    """
+    return Screenshot(
+        shot.data, shot.width, shot.height, "image/jpeg",
+        content_hash=shot.content_hash,
+        region=(shot.src_x, shot.src_y, shot.src_w, shot.src_h),
+    )
+
+
 class Session(CoordinateMixin, AimingMixin):
     """One display, one coordinate frame.
 
@@ -120,15 +133,6 @@ class Session(CoordinateMixin, AimingMixin):
         self._delivered = identity
         return True
 
-    def forget_delivered(self) -> None:
-        """Drops the record, so the next capture is sent whatever it looks like.
-
-        Used when the model's view of the screen is no longer trustworthy -- a
-        display switch, say -- where "unchanged" would be true of the pixels and a
-        lie about what it is looking at.
-        """
-        self._delivered = None
-
     def _refresh_reference(self) -> tuple[int, int]:
         """Recomputes the screenshot size whenever the display mode changes.
 
@@ -215,11 +219,7 @@ class Session(CoordinateMixin, AimingMixin):
         # step with what the model actually received.
         self._native_size = (self.screen.width, self.screen.height)
         self._ref = (shot.width, shot.height)
-        return Screenshot(
-            shot.data, shot.width, shot.height, "image/jpeg",
-            content_hash=shot.content_hash,
-            region=(shot.src_x, shot.src_y, shot.src_w, shot.src_h),
-        )
+        return _as_screenshot(shot)
 
     def wait_for_change(self, timeout_seconds: float) -> float | None:
         """Blocks until the screen changes. Returns milliseconds, or None on timeout.
@@ -283,11 +283,7 @@ class Session(CoordinateMixin, AimingMixin):
             rw=w,
             rh=h,
         )
-        zoomed = Screenshot(
-            shot.data, shot.width, shot.height, "image/jpeg",
-            content_hash=shot.content_hash,
-            region=(shot.src_x, shot.src_y, shot.src_w, shot.src_h),
-        )
+        zoomed = _as_screenshot(shot)
         # Recorded even when the image turns out to be identical to the last one and
         # is suppressed: the model still has that picture, so in_zoom must still work
         # against it. Tying this to delivery would make a click fail for the reason

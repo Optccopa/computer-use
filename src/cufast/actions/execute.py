@@ -54,6 +54,37 @@ def capture_result(session: Session, label: str, shot: Screenshot,
 # screenshot that follows is the pre-hover frame, and the model concludes the tooltip
 
 
+def _turn(session: Session, dx: int, dy: int, params: dict[str, Any]) -> None:
+    """Sends a relative move and keeps the cursor on the display it belongs to.
+
+    The bounds check that protects absolute coordinates does not apply to a delta,
+    so without confine_cursor a few relative moves walk the pointer onto another
+    monitor and a later click with no coordinate lands on a display the model was
+    never given. Every relative move goes through here so none can skip that.
+    """
+    was_on = session.cursor_is_on_display()
+    _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
+    session.confine_cursor(was_on)
+
+
+def _held_note(verb: str) -> str:
+    held = _native.held_keys()
+    return f"OK ({verb}: {', '.join(held) if held else 'nothing'})"
+
+
+def _move_to_optional_coordinate(session: Session, params: dict[str, Any]) -> None:
+    """Moves the cursor when a coordinate was given, and resolves it first.
+
+    Resolution happens before the move on purpose: a coordinate that turns out to be
+    out of frame used to move the cursor and only then fail, leaving a hover applied
+    and the batch halted.
+    """
+    if params.get("coordinate") is None:
+        return
+    x, y = _coordinate(params["coordinate"], "coordinate")
+    _native.mouse_move(*session.resolve_point(x, y, bool(params.get("in_zoom"))))
+
+
 def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult:
     """Runs one action. Raises ActionError with a message meant for the model.
 
@@ -91,13 +122,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         # Resolved before the move. "ctrl+zzz" used to move the cursor and only then
         # fail, leaving a hover applied and the batch halted with no screenshot.
         _native.validate_chord(modifiers)
-        target = None
-        if params.get("coordinate") is not None:
-            x, y = _coordinate(params["coordinate"], "coordinate")
-            # may raise; nothing has moved yet
-            target = session.resolve_point(x, y, bool(params.get("in_zoom")))
-        if target is not None:
-            _native.mouse_move(*target)
+        _move_to_optional_coordinate(session, params)
         _native.mouse_click(button, clicks, modifiers)
         return ActionResult(name, text="OK")
 
@@ -121,9 +146,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         # made -- it asked for 100 and would be shown 188.
         asked = (float(params.get("dx", 0)), float(params.get("dy", 0)))
         dx, dy = session.scale_delta(*asked)
-        was_on = session.cursor_is_on_display()
-        _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
-        session.confine_cursor(was_on)
+        _turn(session, dx, dy, params)
         # Recorded after the move, so a rejected one is not counted as a turn that
         # happened. The hint is advisory: looking around legitimately reverses too.
         hint = session.note_relative_move(*asked)
@@ -147,9 +170,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         # The probe turned the view as a side effect, and the coordinate was given
         # against the frame from before it, so that much of the turn is already done.
         dx -= already_turned
-        was_on = session.cursor_is_on_display()
-        _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
-        session.confine_cursor(was_on)
+        _turn(session, dx, dy, params)
         # An aim is a measured turn, not a guess, so it must not leave a delta behind
         # for the next relative move to be accused of reversing.
         session.forget_relative_move()
@@ -163,9 +184,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         yaw = float(params.get("yaw", 0))
         pitch = float(params.get("pitch", 0))
         dx, dy = session.look_delta(yaw, pitch)
-        was_on = session.cursor_is_on_display()
-        _native.mouse_move_relative(dx, dy, int(params.get("steps", 1)))
-        session.confine_cursor(was_on)
+        _turn(session, dx, dy, params)
         return ActionResult(name, text=f"OK (yaw {yaw:+g}, pitch {pitch:+g} degrees "
                                        f"= {dx:+d}, {dy:+d} native pixels)")
 
@@ -183,15 +202,11 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
 
     if name == "key_down":
         _native.key_down(_text(params))
-        held = _native.held_keys()
-        listed = ", ".join(held) if held else "nothing"
-        return ActionResult(name, text=f"OK (now held: {listed})")
+        return ActionResult(name, text=_held_note("now held"))
 
     if name == "key_up":
         _native.key_up(_text(params))
-        held = _native.held_keys()
-        listed = ", ".join(held) if held else "nothing"
-        return ActionResult(name, text=f"OK (still held: {listed})")
+        return ActionResult(name, text=_held_note("still held"))
 
     if name == "left_mouse_down":
         _native.mouse_down("left")
@@ -216,12 +231,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         clicks = int(params["scroll_amount"])
         modifiers = _text(params, required=False)
         _native.validate_chord(modifiers)
-        target = None
-        if params.get("coordinate") is not None:
-            x, y = _coordinate(params["coordinate"], "coordinate")
-            target = session.resolve_point(x, y, bool(params.get("in_zoom")))
-        if target is not None:
-            _native.mouse_move(*target)
+        _move_to_optional_coordinate(session, params)
         _native.mouse_scroll(direction, clicks, modifiers)
         return ActionResult(name, text="OK")
 

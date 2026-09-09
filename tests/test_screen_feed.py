@@ -64,15 +64,6 @@ class TestAnIdenticalFrameIsNotSentTwice:
         assert full[0].image is not None
         assert zoom[0].image is not None
 
-    def test_forgetting_makes_the_next_frame_send_again(self, session, fake_screen,
-                                                       fake_input):
-        fake_screen.static = True
-        run_batch(session, [{"action": "screenshot"}], False)
-        session.forget_delivered()
-        results = run_batch(session, [{"action": "screenshot"}], False)
-        assert results[0].image is not None
-
-
 class TestTheAutomaticScreenshotIsTheFeed:
     def test_every_batch_ends_with_the_screen(self, session, fake_input):
         results = run_batch(session, [{"action": "cursor_position"}], True)

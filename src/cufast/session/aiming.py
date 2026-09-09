@@ -91,41 +91,32 @@ class AimingMixin:
 
         return to_int(dx, yaw_deg, "yaw"), to_int(dy, pitch_deg, "pitch")
 
-    def _measure_pan(self, probe_native: int) -> tuple[int, float, int]:
+    def _measure(self, dx: int, dy: int, rows: bool, cap: int) -> tuple[int, float, int]:
         """Turn by a known amount and measure how far the image moved.
 
         Uses profiles rather than screenshots: the JPEG encode is most of the cost of
-        a capture and produces nothing this needs.
+        a capture and produces nothing this needs. `rows` picks the axis -- a pitch
+        change slides the image vertically, which a column profile cannot see at all
+        because it sums over exactly the axis that moved.
         """
-        ref_w, _ = self._refresh_reference()
+        ref_w, ref_h = self._refresh_reference()
         cfg = self.config
-        before = self.screen.profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
-        _native.mouse_move_relative(probe_native, 0, 1)
+        profile = self.screen.profile_rows if rows else self.screen.profile
+        before = profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
+        _native.mouse_move_relative(dx, dy, 1)
         # The frame that shows the turn has to have been drawn before it can be
         # measured, and settle_ms is allowed to be 0 in tests.
         time.sleep(max(cfg.settle_ms, 50) / 1000.0)
-        after = self.screen.profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
-        window = max(min(ref_w // 2, 400), 1)
+        after = profile(cfg.max_width, cfg.max_height, cfg.capture_timeout_ms)
+        window = max(min((ref_h if rows else ref_w) // 2, cap), 1)
         shift, confidence = _native.best_shift(before, after, window)
         return shift, confidence, window
+
+    def _measure_pan(self, probe_native: int) -> tuple[int, float, int]:
+        return self._measure(probe_native, 0, rows=False, cap=400)
 
     def _measure_tilt(self, probe_native: int) -> tuple[int, float, int]:
-        """The vertical counterpart of _measure_pan, using row profiles.
-
-        A pitch change slides the image up or down, which a column profile cannot
-        see at all -- it sums over exactly the axis that moved.
-        """
-        _, ref_h = self._refresh_reference()
-        cfg = self.config
-        before = self.screen.profile_rows(cfg.max_width, cfg.max_height,
-                                          cfg.capture_timeout_ms)
-        _native.mouse_move_relative(0, probe_native, 1)
-        time.sleep(max(cfg.settle_ms, 50) / 1000.0)
-        after = self.screen.profile_rows(cfg.max_width, cfg.max_height,
-                                         cfg.capture_timeout_ms)
-        window = max(min(ref_h // 2, 300), 1)
-        shift, confidence = _native.best_shift(before, after, window)
-        return shift, confidence, window
+        return self._measure(0, probe_native, rows=True, cap=300)
 
     def _calibrate_pitch(self) -> None:
         """Measures the vertical ratio, and leaves it unset if it cannot.
