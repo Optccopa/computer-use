@@ -11,7 +11,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Only so the badge step can push the number it measured back to main. Every
+# Only so the badge step can push the numbers it measured back to main. Every
 # other step here reads. A pull request from a fork gets a read-only token
 # whatever this says, which is why that step is also gated on the branch.
 permissions:
@@ -54,23 +54,27 @@ jobs:
         # run locally instead -- skipping them here beats asserting something that
         # does not mean anything.
         #
-        # --junitxml because the badge below needs the counts, and parsing pytest's
-        # human summary is guessing at a format that is allowed to change.
-        run: uv run pytest -q -m "not desktop" --junitxml=results.xml
+        # --junitxml and --cov because the badges below need the counts. Parsing
+        # pytest's human summary would be guessing at a format allowed to change.
+        run: >
+          uv run pytest -q -m "not desktop"
+          --junitxml=results.xml
+          --cov=cufast --cov-report=json:coverage.json
 
-      - name: Publish the test count
-        # always(), so a run that fails still publishes the number that failed --
-        # a badge that only updates when everything passes is stuck showing the
+      - name: Publish the badge numbers
+        # always(), so a run that fails still publishes the numbers that failed. A
+        # badge that only updates when everything passes is stuck advertising the
         # last good day, which is worse than showing nothing.
         #
-        # Nothing hosts a test count for you the way PyPI hosts a version, so this
-        # writes the shields endpoint the README points at. Only from main, and
-        # only when the number moved. [skip ci] stops it triggering itself.
+        # Nothing hosts these for you the way PyPI hosts a version, so this writes
+        # the shields endpoints the README points at. Only from main, and only when
+        # a number moved. [skip ci] stops it from triggering itself.
         if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
           python - <<'PY'
-          import json, pathlib, xml.etree.ElementTree as ET
+          import json, pathlib, sys, xml.etree.ElementTree as ET
+
           root = ET.parse("results.xml").getroot()
           suite = root if root.tag == "testsuite" else root[0]
           # Skips are excluded from the total: a test skipped for want of a real
@@ -79,20 +83,41 @@ jobs:
           total = int(suite.get("tests", 0)) - int(suite.get("skipped", 0))
           bad = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
           passing = total - bad
+
+          cov = int(json.loads(
+              pathlib.Path("coverage.json").read_text()
+          )["totals"]["percent_covered"])
+
+          # Counted, not run. The suite takes about twenty minutes with the native
+          # half rebuilding each time, so the badge says how many mutations exist
+          # rather than claiming they were all caught on this push.
+          #
+          # Imported rather than pattern-matched: counting "    (" in the source was
+          # off by one against the real list, and a badge derived from a regex over
+          # Python is a badge that is wrong the first time someone wraps a line.
+          sys.path.insert(0, "scripts")
+          import mutate
+          mutations = len(mutate.PYTHON_MUTATIONS) + len(mutate.NATIVE_MUTATIONS)
+
           out = pathlib.Path(".github/badges")
           out.mkdir(parents=True, exist_ok=True)
-          (out / "tests.json").write_text(json.dumps({
-              "schemaVersion": 1,
-              "label": "tests",
-              "message": f"{passing}/{total} passing",
-              "color": "brightgreen" if passing == total else "red",
-          }, indent=2) + "\n")
-          print(f"{passing}/{total} passing")
+          for name, message, color in (
+              ("tests", f"{passing}/{total} passing",
+               "brightgreen" if passing == total else "red"),
+              ("coverage", f"{cov}%",
+               "brightgreen" if cov >= 90 else "green" if cov >= 75 else "orange"),
+              ("mutations", f"{mutations}", "brightgreen"),
+          ):
+              (out / f"{name}.json").write_text(json.dumps({
+                  "schemaVersion": 1, "label": name,
+                  "message": message, "color": color,
+              }, indent=2) + "\n")
+          print(f"tests {passing}/{total}, coverage {cov}%, mutations {mutations}")
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/badges/tests.json
+          git add .github/badges
           git diff --cached --quiet || {
-            git commit -m "chore: test count [skip ci]"
+            git commit -m "chore: badge numbers [skip ci]"
             git push
           }

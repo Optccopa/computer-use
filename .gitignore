@@ -60,3 +60,9 @@ plugin/bin/cufast.exe
 .coverage
 .coverage.*
 htmlcov/
+
+# CI writes these at the repo root to derive the badge numbers; artifacts, not
+# source. Anchored with a leading slash: unanchored, "coverage.json" also matches
+# .github/badges/coverage.json, which is the badge itself and must be committed.
+/results.xml
+/coverage.json

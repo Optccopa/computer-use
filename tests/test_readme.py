@@ -23,6 +23,36 @@ def section(title: str) -> str:
     return body.split("\n## ")[0]
 
 
+class TestNoBadgeCanDriftIntoALie:
+    """Every number left in a badge is checked against the thing it describes.
+
+    A badge is read as a fact, so a stale one is a false claim rather than an
+    untidy one. Tests, coverage and the mutation count are measured by CI and
+    written to .github/badges/, so they cannot be typed wrong; what is left here
+    is the two that are hardcoded, and both are checked against the file that
+    decides them.
+    """
+
+    def test_the_measured_badges_point_at_an_endpoint_not_a_number(self):
+        # A hardcoded number here would be a claim nothing checks. These three are
+        # written by CI from the run itself, so the README must only ever name the
+        # endpoint -- a literal count creeping back in is the regression.
+        text = README.read_text(encoding="utf-8")
+        for name in ("tests", "coverage", "mutations"):
+            assert f".github/badges/{name}.json" in text, name
+        assert not re.search(r"badge/(tests|coverage|mutations)-\d", text)
+
+    def test_the_cpp_standard_badge_matches_cmake(self):
+        cmake = (README.parent / "CMakeLists.txt").read_text(encoding="utf-8")
+        standard = re.search(r"CMAKE_CXX_STANDARD (\d+)", cmake).group(1)
+        assert f"C%2B%2B-{standard}-" in README.read_text(encoding="utf-8")
+
+    def test_the_python_badge_matches_the_requirement(self):
+        pyproject = (README.parent / "pyproject.toml").read_text(encoding="utf-8")
+        wanted = re.search(r'requires-python = ">=([\d.]+)"', pyproject).group(1)
+        assert f"Python-{wanted}-" in README.read_text(encoding="utf-8")
+
+
 class TestEveryActionNameMentionedIsReal:
     def test_no_readme_action_has_been_renamed_away(self):
         """The README no longer tabulates the actions, but it names several in

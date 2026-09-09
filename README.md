@@ -1,6 +1,6 @@
 # cufast
 
-Fast Windows computer use for Claude Code. Screen capture and input injection in C++, behind an MCP server and a plugin that puts the screen in front of the model before every turn.
+Fast, Vibecoded, Windows computer use for Claude Code. Screen capture and input injection in C++, behind an MCP server and a plugin that puts the screen in front of the model before every turn.
 
 ![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?logo=claude&logoColor=white)
 ![MCP](https://img.shields.io/badge/MCP-server_+_plugin-000000?logo=modelcontextprotocol&logoColor=white)
@@ -9,8 +9,8 @@ Fast Windows computer use for Claude Code. Screen capture and input injection in
 [![CI](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml/badge.svg)](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml)
 [![Linting](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Optccopa/computer-use/main/.github/badges/tests.json)](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml)
-[![coverage 92%](https://img.shields.io/badge/coverage-92%25-brightgreen)](tests/)
-[![mutations 61 caught](https://img.shields.io/badge/mutations-61%20caught-brightgreen)](scripts/mutate.py)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Optccopa/computer-use/main/.github/badges/coverage.json)](https://github.com/Optccopa/computer-use/actions/workflows/ci.yml)
+[![mutations](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Optccopa/computer-use/main/.github/badges/mutations.json)](scripts/mutate.py)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)](CMakeLists.txt)
 [![Python 3.14](https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white)](pyproject.toml)
 
@@ -39,6 +39,8 @@ uv pip install -e .
 Then pick **one** of the two below, not both. Two servers means two harnesses, each with its own kill switch, and only one stops the one that is running.
 
 **Ctrl+Esc stops everything.** Press it again to release.
+
+There is no sandbox. Clicks and keystrokes go to your real machine, so the model can do anything you could, and the kill switch is the boundary rather than a permission list. The harness caps how long one call may occupy it and keeps the cursor on the display it was given, but it does not decide which buttons are safe to press.
 
 ### MCP
 
