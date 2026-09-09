@@ -8,8 +8,12 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Python 3.14 REQUIRED COMPONENTS Interpreter Development.Module)
-find_package(nanobind CONFIG REQUIRED)
+# The module and the CLI are independent consumers of cufast_core, and the CLI has
+# to be buildable without nanobind: nanobind only exists inside the wheel build
+# environment, so requiring it unconditionally made a standalone CLI build fail at
+# configure time on a machine that can compile everything the CLI actually needs.
+option(CUFAST_BUILD_MODULE "Build the Python extension module" ON)
+option(CUFAST_BUILD_CLI "Build the cufast command line tool" OFF)
 
 # Everything that touches the screen, the mouse or the keyboard, with no binding
 # layer in it. Split out as its own library so it has more than one consumer: the
@@ -62,9 +66,32 @@ target_link_libraries(cufast_core PUBLIC
 # NOMINSIZE is load-bearing: nanobind defaults to /Os (FavorSizeOrSpeed=Size) to
 # keep binding glue small, which also suppresses auto-vectorization and unrolling
 # in the downscale kernel -- the hottest loop in the project.
-nanobind_add_module(_native NB_STATIC NOMINSIZE LTO
-  src/native/bindings/module.cpp
-)
-target_link_libraries(_native PRIVATE cufast_core)
+if(CUFAST_BUILD_MODULE)
+  find_package(Python 3.14 REQUIRED COMPONENTS Interpreter Development.Module)
+  find_package(nanobind CONFIG REQUIRED)
 
-install(TARGETS _native LIBRARY DESTINATION cufast)
+  nanobind_add_module(_native NB_STATIC NOMINSIZE LTO
+    src/native/bindings/module.cpp
+  )
+  target_link_libraries(_native PRIVATE cufast_core)
+
+  install(TARGETS _native LIBRARY DESTINATION cufast)
+endif()
+
+# The CLI: the core library's second consumer.
+#
+# Not built by the Python wheel -- `pip install .` has no reason to produce it, and
+# scikit-build-core would try to package it. Build it directly when you want it:
+#
+#   cmake -S . -B build/cli -DCUFAST_BUILD_CLI=ON -DCUFAST_BUILD_MODULE=OFF
+#   cmake --build build/cli --config Release
+if(CUFAST_BUILD_CLI)
+  add_executable(cufast
+    src/native/cli/main.cpp
+    src/native/cli/args.cpp
+    src/native/cli/diagnose.cpp
+    src/native/cli/capture_cmds.cpp
+    src/native/cli/input_cmds.cpp
+  )
+  target_link_libraries(cufast PRIVATE cufast_core)
+endif()
