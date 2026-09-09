@@ -65,6 +65,15 @@ def _duration(params: dict[str, Any]) -> float:
     return seconds
 
 
+def _in_zoom(params: dict[str, Any]) -> None:
+    """in_zoom decides which coordinate space the numbers are in, so a wrong type
+    must not be read as truthiness. "false" is a non-empty string and would switch
+    spaces silently, landing the click somewhere real and wrong."""
+    value = params.get("in_zoom")
+    if value is not None and not isinstance(value, bool):
+        raise ActionError(f"in_zoom must be true or false, got {value!r}")
+
+
 def validate(name: Any, params: dict[str, Any]) -> None:
     """Checks an action without performing any of it.
 
@@ -102,6 +111,7 @@ def validate(name: Any, params: dict[str, Any]) -> None:
         if params.get("coordinate") is not None:
             _coordinate(params["coordinate"], "coordinate")
         _text(params, required=False)
+        _in_zoom(params)
 
     elif name == "left_click_drag":
         if params.get("start_coordinate") is None or params.get("coordinate") is None:
@@ -109,6 +119,7 @@ def validate(name: Any, params: dict[str, Any]) -> None:
         _coordinate(params["start_coordinate"], "start_coordinate")
         _coordinate(params["coordinate"], "coordinate")
         _text(params, required=False)
+        _in_zoom(params)
 
     elif name == "scroll":
         direction = params.get("scroll_direction")
@@ -124,6 +135,7 @@ def validate(name: Any, params: dict[str, Any]) -> None:
         if params.get("coordinate") is not None:
             _coordinate(params["coordinate"], "coordinate")
         _text(params, required=False)
+        _in_zoom(params)
 
     elif name == "mouse_move_rel":
         if params.get("dx") is None and params.get("dy") is None:

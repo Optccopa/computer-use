@@ -70,7 +70,20 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
 
     if name == "zoom":
         shot = session.zoom([float(v) for v in params["region"]])
-        return capture_result(session, name, shot)
+        _, _, rw, rh = shot.region
+        # The magnification against the full screenshot, which is the number that
+        # decides whether zooming again is worth a round trip. Reported rather than
+        # left to be inferred: the model cannot see the native size of the region it
+        # asked for, so it has no way to work this out.
+        gain = (shot.width / rw) * (session.screen.width / max(session.ref_width, 1))
+        note = (
+            f" ({shot.width}x{shot.height} covering a {rw}x{rh} native area, "
+            f"about {gain:.1f}x the detail of the full screenshot). To act on "
+            "something you can see here, pass in_zoom=true with a coordinate in "
+            "THIS image; that reaches individual native pixels, which a "
+            "full-screenshot coordinate cannot."
+        )
+        return capture_result(session, name, shot, note)
 
     if name in _CLICK_BUTTONS:
         button, clicks = _CLICK_BUTTONS[name]
@@ -81,7 +94,8 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         target = None
         if params.get("coordinate") is not None:
             x, y = _coordinate(params["coordinate"], "coordinate")
-            target = session.to_screen(x, y)  # may raise; nothing has moved yet
+            # may raise; nothing has moved yet
+            target = session.resolve_point(x, y, bool(params.get("in_zoom")))
         if target is not None:
             _native.mouse_move(*target)
         _native.mouse_click(button, clicks, modifiers)
@@ -90,14 +104,15 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
     if name == "left_click_drag":
         x0, y0 = _coordinate(params["start_coordinate"], "start_coordinate")
         x1, y1 = _coordinate(params["coordinate"], "coordinate")
-        start = session.to_screen(x0, y0)
-        end = session.to_screen(x1, y1)
+        in_zoom = bool(params.get("in_zoom"))
+        start = session.resolve_point(x0, y0, in_zoom)
+        end = session.resolve_point(x1, y1, in_zoom)
         _native.mouse_drag(start[0], start[1], end[0], end[1], _text(params, required=False))
         return ActionResult(name, text="OK")
 
     if name == "mouse_move":
         x, y = _coordinate(params["coordinate"], "coordinate")
-        _native.mouse_move(*session.to_screen(x, y))
+        _native.mouse_move(*session.resolve_point(x, y, bool(params.get("in_zoom"))))
         return ActionResult(name, text="OK")
 
     if name == "mouse_move_rel":
@@ -192,7 +207,7 @@ def execute(session: Session, name: str, params: dict[str, Any]) -> ActionResult
         target = None
         if params.get("coordinate") is not None:
             x, y = _coordinate(params["coordinate"], "coordinate")
-            target = session.to_screen(x, y)
+            target = session.resolve_point(x, y, bool(params.get("in_zoom")))
         if target is not None:
             _native.mouse_move(*target)
         _native.mouse_scroll(direction, clicks, modifiers)

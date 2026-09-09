@@ -126,6 +126,58 @@ class CoordinateMixin:
             "`display`."
         )
 
+    def zoom_to_screen(self, x: float, y: float) -> tuple[int, int]:
+        """A pixel in the last zoom image -> an absolute desktop pixel.
+
+        This is what makes a zoom actionable rather than merely readable. A zoom is
+        captured at native resolution, so one of its pixels is one real pixel of the
+        display; a full screenshot of a 1920-wide monitor fitted into a 1024-wide box
+        is not, and no coordinate expressed in it can address a specific native pixel.
+        Anything that has to be exact -- a one-pixel border, a caret between two
+        characters, the gap between adjacent toolbar buttons -- is only reachable
+        this way.
+
+        The alternative was making the model convert zoom pixels back to screenshot
+        pixels itself, which is arithmetic over four numbers it would have to be told
+        and would get wrong silently, landing a confident click somewhere plausible.
+        """
+        shot = self.last_zoom
+        if shot is None:
+            raise ActionError(
+                "in_zoom was set, but nothing has been zoomed yet in this session. "
+                "Run a `zoom` action first; its coordinates are the ones in_zoom "
+                "refers to."
+            )
+        rx, ry, rw, rh = shot.region
+        for axis, value, limit in (("x", x, shot.width), ("y", y, shot.height)):
+            if not math.isfinite(value):
+                raise ActionError(f"{axis} must be a finite number, got {value!r}")
+            if value < -1.0 or value >= limit + 1.0:
+                raise ActionError(
+                    f"{axis}={value:g} is outside the zoom image, which is "
+                    f"{shot.width}x{shot.height}. With in_zoom set, coordinates are "
+                    f"in the zoom's own pixel space, not the full screenshot's."
+                )
+
+        # Centre of the source box, then confined to it -- the same rule to_local
+        # uses, and for the same reason: at a scale factor below 2 the centre can
+        # round past the end of its own span and land on the neighbouring pixel.
+        # Usually the zoom is 1:1 native and both reduce to the identity.
+        xi = min(max(int(x), 0), shot.width - 1)
+        yi = min(max(int(y), 0), shot.height - 1)
+        sx0, sx1 = _span(xi, shot.width, rw)
+        sy0, sy1 = _span(yi, shot.height, rh)
+        lx = min(max(int((x + 0.5) * rw / shot.width), sx0), sx1 - 1)
+        ly = min(max(int((y + 0.5) * rh / shot.height), sy0), sy1 - 1)
+
+        # Region offsets are monitor-local, so this lands on the display the zoom
+        # came from even if the harness has since been pointed at another one.
+        return (rx + lx + self.screen.origin_x, ry + ly + self.screen.origin_y)
+
+    def resolve_point(self, x: float, y: float, in_zoom: bool) -> tuple[int, int]:
+        """One entry point for both coordinate spaces, so no caller can forget."""
+        return self.zoom_to_screen(x, y) if in_zoom else self.to_screen(x, y)
+
     def check_in_frame(self, x: float, y: float) -> None:
         """Rejects a coordinate that is not on the screenshot, moving nothing.
 

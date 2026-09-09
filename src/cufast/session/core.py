@@ -20,10 +20,18 @@ class Session(CoordinateMixin, AimingMixin):
     correctness-critical piece of this project: a wrong scale silently clicks the
     wrong thing rather than raising.
 
-    Zoom deliberately does not get its own coordinate frame. The computer-use spec
-    is explicit that zoom images do not change the coordinate space, so clicks after
-    a zoom are still expressed against the full screenshot and map through the same
-    reference size as everything else.
+    Zoom does not change that space: the computer-use spec is explicit that a zoom
+    image leaves coordinates alone, so a plain click after a zoom is still expressed
+    against the full screenshot and maps through the same reference size as
+    everything else. That default is kept because a model carrying the standard
+    tool's priors will assume it.
+
+    `in_zoom` is the deliberate exception, and it is opt-in for that reason. A full
+    screenshot is fitted into a 1024-wide box, so on a 1920-wide display one of its
+    pixels covers nearly two real ones and no coordinate in it can name a specific
+    native pixel. A zoom is captured at native resolution, so with `in_zoom` set the
+    coordinate is read against the zoom's own pixels and anything visible in it is
+    exactly reachable.
     """
 
     def __init__(self, config: Config) -> None:
@@ -53,6 +61,11 @@ class Session(CoordinateMixin, AimingMixin):
         # it already has costs a full image of context to say nothing -- which is
         # also what teaches it that asking again is worth doing.
         self._delivered: tuple[tuple[int, int, int, int], int] | None = None
+        # The last zoom, kept so a coordinate can be given in its pixel space. Held
+        # on the session rather than passed back and forth because the click that
+        # acts on a zoom is usually in a later call than the zoom itself -- the model
+        # looks, decides, then acts.
+        self.last_zoom: Screenshot | None = None
         self._refresh_reference()
 
     def mark_delivered(self, shot: Screenshot) -> bool:
@@ -230,8 +243,14 @@ class Session(CoordinateMixin, AimingMixin):
             rw=w,
             rh=h,
         )
-        return Screenshot(
+        zoomed = Screenshot(
             shot.data, shot.width, shot.height, "image/jpeg",
             content_hash=shot.content_hash,
             region=(shot.src_x, shot.src_y, shot.src_w, shot.src_h),
         )
+        # Recorded even when the image turns out to be identical to the last one and
+        # is suppressed: the model still has that picture, so in_zoom must still work
+        # against it. Tying this to delivery would make a click fail for the reason
+        # that nothing had changed, which is not a reason.
+        self.last_zoom = zoomed
+        return zoomed

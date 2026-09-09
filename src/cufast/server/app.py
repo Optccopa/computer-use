@@ -54,6 +54,7 @@ def build_server(config: Config | None = None) -> MCPServer:
         pitch: float | None = None,
         aim_ratio: float | None = None,
         look_degrees_per_pixel: float | None = None,
+        in_zoom: bool | None = None,
         auto_screenshot: bool = True,
         display: int | None = None,
     ) -> list[TextContent | ImageContent]:
@@ -77,6 +78,7 @@ def build_server(config: Config | None = None) -> MCPServer:
             "pitch": pitch,
             "aim_ratio": aim_ratio,
             "look_degrees_per_pixel": look_degrees_per_pixel,
+            "in_zoom": in_zoom,
         }
         try:
             batch = batch_from_call(action, actions, flat)

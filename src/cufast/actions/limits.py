@@ -83,7 +83,7 @@ _STEPPED = frozenset({"mouse_move_rel", "aim", "look"})
 FLAT_PARAMS = (
     "coordinate", "text", "start_coordinate", "scroll_direction", "scroll_amount",
     "duration", "repeat", "region", "dx", "dy", "steps", "yaw", "pitch",
-    "aim_ratio", "look_degrees_per_pixel",
+    "aim_ratio", "look_degrees_per_pixel", "in_zoom",
 )
 
 

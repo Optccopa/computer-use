@@ -58,12 +58,30 @@ origin top-left. That is a scaled-down view of the display, so never use the nat
 display resolution. `zoom` does NOT change this: after zooming, still click using
 full-screenshot coordinates.
 
+PIXEL-PERFECT TARGETING. The exception, and the only way to hit an exact pixel. The
+screenshot is fitted into a box, so on a 1920-wide display one screenshot pixel covers
+nearly two real ones -- you cannot address a single native pixel through it, and for a
+one-pixel border, a caret between two characters, or the seam between two adjacent
+buttons that is not good enough. A `zoom` is captured at NATIVE resolution, so its
+pixels are real pixels. Add `in_zoom: true` to a click, drag, mouse_move or scroll and
+its coordinate is read against the LAST ZOOM IMAGE instead of the full screenshot:
+
+    {"actions": [{"action": "zoom", "region": [500, 300, 560, 330]},
+                 {"action": "left_click", "coordinate": [214, 88], "in_zoom": true}]}
+
+The zoom result tells you the image size and how much detail it gained. Coordinates
+are in that image, origin at ITS top-left, so read them straight off the picture --
+never convert back to full-screenshot coordinates by hand. The zoom stays available
+for later calls, so you can look now and click in the next call. Without `in_zoom`
+a coordinate always means the full screenshot, so nothing you already do changes.
+
 ACTIONS. The first block is the standard set and behaves exactly as you expect; the
 second is what this harness adds. Whether you send one action or a list, each carries
 "action" plus that action's parameters.
 THE STANDARD SET -- unchanged, use them exactly as you always do:
   screenshot        -- {}. Capture the display.
-  left_click        -- {"coordinate": [x, y] (optional), "text": modifiers (optional)}
+  left_click        -- {"coordinate": [x, y] (optional), "text": modifiers (optional),
+                        "in_zoom": true (optional, see PIXEL-PERFECT TARGETING)}
   right_click, middle_click, double_click, triple_click -- same shape as left_click.
                        Omit coordinate to act at the current cursor position. `text`
                        holds modifier keys, e.g. "shift" or "ctrl+shift".
@@ -89,6 +107,7 @@ WHAT THIS HARNESS ADDS:
   zoom              -- {"region": [x0, y0, x1, y1]}. Re-capture that rectangle at full
                        resolution. Use it whenever text is too small to read reliably:
                        file names, tab titles, status bars, button labels, line numbers.
+                       Also the way to click precisely -- see PIXEL-PERFECT TARGETING.
   wait_for_change   -- {"duration": seconds}. Blocks until the screen actually
                        changes, and reports how long that took. Returns the moment
                        it happens, so it is both faster than a guessed sleep and
