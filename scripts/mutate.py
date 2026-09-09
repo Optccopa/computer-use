@@ -150,9 +150,10 @@ PYTHON_MUTATIONS: list[tuple[str, str, str, str]] = [
     ),
     (
         "modifiers are parsed after the cursor moves",
-        "src/cufast/actions.py",
-        "        _native.validate_chord(modifiers)\n        target = None",
-        "        target = None",
+        "src/cufast/actions/execute.py",
+        "        _native.validate_chord(modifiers)\n"
+        "        _move_to_optional_coordinate(session, params)",
+        "        _move_to_optional_coordinate(session, params)",
     ),
     (
         "aim probes before checking its coordinate",
