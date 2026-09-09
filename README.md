@@ -42,11 +42,47 @@ uv pip install pytest && .venv/Scripts/python.exe -m pytest -q
 
 ## Use it from Claude Code
 
+Either install the plugin, which is the whole setup in one step, or register the
+MCP server by hand. Do one or the other, not both: two servers means two harnesses,
+each with its own kill switch, and only one of them stops the one that is running.
+
+### As a plugin (recommended)
+
+```bash
+claude plugin marketplace add /full/path/to/computer-use
+claude plugin install cufast@cufast
+```
+
+Restart Claude Code. That brings three things:
+
+- **The MCP server**, already wired up. No `claude mcp add`.
+- **A hook** that captures the screen before every turn and tells the model where
+  the image is, which display it is, and how many are attached. Hooks can inject
+  text but not images, so it writes the file and names the path; it writes at the
+  same display, box and quality the tool uses, so a pixel measured off that file is
+  a pixel the tool can click.
+- **A skill**, `driving-the-desktop`, covering batching, zoom, switching monitors
+  and the stop button.
+
+To try it for a single session without installing anything:
+
+```bash
+claude --plugin-dir /full/path/to/computer-use/plugin
+```
+
+The hook runs `plugin/bin/cufast.exe`, which CMake copies there on every build. It
+is gitignored rather than committed, because a stale copy would keep answering with
+older capture code than the source claims and nothing would report the difference.
+Build once before first use.
+
+### By hand
+
 ```bash
 claude mcp add cufast -- /full/path/to/.venv/Scripts/python.exe -m cufast.server
 ```
 
-Two tools appear: `computer` and `screen_info`.
+Two tools appear: `computer` and `screen_info`. No hook and no skill: the model
+learns what is on screen only when it calls the tool.
 
 ```jsonc
 {

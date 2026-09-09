@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cufast",
+  "description": "Fast Windows computer use for Claude Code: a C++ capture and input core behind an MCP server.",
+  "owner": {
+    "name": "Optccopa",
+    "url": "https://github.com/Optccopa/computer-use"
+  },
+  "plugins": [
+    {
+      "name": "cufast",
+      "description": "Drive this Windows desktop. Bundles the MCP server and puts a live screenshot in front of the model before every turn.",
+      "source": "./plugin",
+      "category": "productivity"
+    }
+  ]
+}
