@@ -55,6 +55,11 @@ desktop.ini
 # serve older capture code than the source says.
 plugin/bin/cufast.exe
 
+# Also written by the build: the absolute path of the interpreter that has cufast
+# installed, so the shim still finds it after the plugin is copied into
+# ~/.claude/plugins/cache. Names a directory on one machine.
+plugin/bin/interpreter.txt
+
 # Written by pytest-cov when measuring coverage. A local artifact, and it
 # embeds absolute paths from the machine that produced it.
 .coverage

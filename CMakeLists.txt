@@ -107,4 +107,29 @@ if(CUFAST_BUILD_CLI)
             $<TARGET_FILE:cufast>
             ${CMAKE_SOURCE_DIR}/plugin/bin/cufast.exe
     COMMENT "Copying cufast.exe into the Claude Code plugin")
+
+  # Which interpreter the plugin's MCP server runs under, written down for the shim.
+  #
+  # `claude plugin install` copies the plugin out of the repo into
+  # ~/.claude/plugins/cache, so the shim's "the .venv two directories up" guess only
+  # holds when the plugin is run in place with --plugin-dir. From the cache it fell
+  # through to whatever `python` PATH names -- and Claude Code starts MCP servers
+  # with its own environment rather than the shell's, so that is usually an
+  # interpreter without cufast. The server then exits with ModuleNotFoundError
+  # before it can say anything, and the tool simply never appears.
+  #
+  # An absolute path makes the copied plugin self-contained. Gitignored like
+  # cufast.exe: it names a directory on one machine.
+  set(CUFAST_PYTHON "${CMAKE_SOURCE_DIR}/.venv/Scripts/python.exe"
+      CACHE FILEPATH "Interpreter the plugin's MCP server runs under")
+  if(EXISTS "${CUFAST_PYTHON}")
+    file(TO_NATIVE_PATH "${CUFAST_PYTHON}" CUFAST_PYTHON_NATIVE)
+    file(WRITE ${CMAKE_SOURCE_DIR}/plugin/bin/interpreter.txt
+         "${CUFAST_PYTHON_NATIVE}")
+  else()
+    message(WARNING
+      "No interpreter at ${CUFAST_PYTHON}, so the plugin's MCP server will have to "
+      "fall back to PATH. Pass -DCUFAST_PYTHON=<path to python.exe>, or set the "
+      "CUFAST_PYTHON environment variable when running Claude Code.")
+  endif()
 endif()

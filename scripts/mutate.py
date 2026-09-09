@@ -452,6 +452,28 @@ NATIVE_MUTATIONS: list[tuple[str, str, str, str]] = [
         "    while (units < cap && text[units] != L'\\0') ++units;",
         "    units = cap;",
     ),
+    # -- the Claude Code hook ------------------------------------------------------
+    # These reach the suite only through plugin/bin/cufast.exe, so they are also the
+    # mutations that prove rebuild() builds the CLI. Before it did, all three
+    # reported SURVIVED against code that was never compiled.
+    (
+        "the hook goes back to hardcoding the JPEG quality",
+        "src/native/cli/hook_cmds.cpp",
+        'const float quality = env_float("CUFAST_JPEG_QUALITY", 0.75f);',
+        "const float quality = 0.75f;",
+    ),
+    (
+        "the hook writes over the picture instead of moving into place",
+        "src/native/cli/hook_cmds.cpp",
+        "if (!MoveFileExA(temp_path.c_str(),",
+        "if (false && MoveFileExA(temp_path.c_str(),",
+    ),
+    (
+        "the hook stops checking which event it was given",
+        "src/native/cli/hook_cmds.cpp",
+        'if (event != "SessionStart" && event != "UserPromptSubmit") {',
+        "if (false) {",
+    ),
 ]
 
 
@@ -638,9 +660,33 @@ def run_suite(extra: list[str], report: bool = False) -> bool:
 
 
 def rebuild() -> bool:
+    """Rebuilds everything the suite can actually reach.
+
+    For a long time this was only the extension module, because `import cufast` was
+    the only way a test touched C++. It is not any more: the plugin tests shell out
+    to plugin/bin/cufast.exe, which comes from the CLI build tree and which
+    `pip install -e .` does not build. A mutation in src/native/cli therefore went
+    into the source, was never compiled, and reported SURVIVED for code that no
+    test had run -- the same false pass a stale binary produced once already.
+
+    The CLI build is skipped when its tree does not exist, since it is configured
+    separately and most checkouts never do.
+    """
     try:
         proc = subprocess.run(["uv", "pip", "install", "-e", ".", "-q"], cwd=REPO,
                               capture_output=True, text=True,
+                              timeout=BUILD_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        return False
+    if proc.returncode != 0:
+        return False
+
+    cli = REPO / "build" / "cli"
+    if not cli.is_dir():
+        return True
+    try:
+        proc = subprocess.run(["cmake", "--build", str(cli), "--config", "Release"],
+                              cwd=REPO, capture_output=True, text=True,
                               timeout=BUILD_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return False

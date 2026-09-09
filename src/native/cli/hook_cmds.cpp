@@ -17,6 +17,7 @@
 // screenshot the tool returned. That equivalence is the whole point -- a preview in a
 // different coordinate space would make the model click confidently in the wrong place.
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -38,18 +39,56 @@ namespace {
 constexpr int kDefaultMaxWidth = 1024;
 constexpr int kDefaultMaxHeight = 768;
 
-int env_int(const char* name, int fallback) {
-    char* value = nullptr;
-    size_t len = 0;
-    if (_dupenv_s(&value, &len, name) != 0 || value == nullptr) return fallback;
-    int parsed = fallback;
-    try {
-        parsed = std::stoi(value);
-    } catch (...) {
-        parsed = fallback;
+// Owns the copy _dupenv_s hands back, so the readers below cannot leak it on an
+// early return. Empty is treated as unset, matching cufast.config.
+class EnvVar {
+public:
+    explicit EnvVar(const char* name) {
+        size_t len = 0;
+        if (_dupenv_s(&value_, &len, name) != 0) value_ = nullptr;
     }
-    std::free(value);
-    return parsed;
+    EnvVar(const EnvVar&) = delete;
+    EnvVar& operator=(const EnvVar&) = delete;
+    ~EnvVar() { std::free(value_); }
+
+    bool set() const { return value_ != nullptr && value_[0] != '\0'; }
+    const char* get() const { return value_; }
+
+private:
+    char* value_ = nullptr;
+};
+
+int env_int(const char* name, int fallback) {
+    const EnvVar var(name);
+    if (!var.set()) return fallback;
+    try {
+        return std::stoi(var.get());
+    } catch (...) {
+        return fallback;
+    }
+}
+
+float env_float(const char* name, float fallback) {
+    const EnvVar var(name);
+    if (!var.set()) return fallback;
+    try {
+        return std::stof(var.get());
+    } catch (...) {
+        return fallback;
+    }
+}
+
+// The same spellings cufast.config accepts. A typo falls back rather than throwing:
+// the server refuses to start on a bad value, which is right for a server, but a
+// hook that fails takes the whole turn's context with it over a mistyped variable.
+bool env_bool(const char* name, bool fallback) {
+    const EnvVar var(name);
+    if (!var.set()) return fallback;
+    std::string value(var.get());
+    for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (value == "1" || value == "true" || value == "yes" || value == "on") return true;
+    if (value == "0" || value == "false" || value == "no" || value == "off") return false;
+    return fallback;
 }
 
 std::string temp_dir() {
@@ -180,17 +219,39 @@ int cmd_hook(const Args& args) {
         // Duplication: building the D3D11 device and the duplication object
         // costs about 110 ms and is thrown away at exit, while BitBlt starts
         // immediately. Measured below; DXGI wins only when frames are streamed.
+        // Read rather than assumed. The comment at the top of this file promises
+        // the hook's image matches what the MCP server would produce, and these two
+        // were hardcoded while cufast.config read them from the environment -- so
+        // setting CUFAST_DRAW_CURSOR=false hid the cursor from every tool result and
+        // left it burnt into the picture the model is handed before the turn.
+        const float quality = env_float("CUFAST_JPEG_QUALITY", 0.75f);
+        const bool cursor = env_bool("CUFAST_DRAW_CURSOR", true);
+
         Screen screen(index, /*prefer_dxgi=*/flag(args, "--dxgi"));
         // timeout 0: take whatever frame is already there. Waiting for the compositor
         // to present would park this hook in the driver on an idle desktop, and an
         // idle desktop is exactly when there is nothing new to wait for.
-        const Shot shot = screen.grab(max_w, max_h, 0.75f, true, 0);
+        const Shot shot = screen.grab(max_w, max_h, quality, cursor, 0);
 
+        // Written beside the target and moved into place, never opened over it.
+        // Opening the real path truncates it first, so a failure part-way through
+        // replaced a good picture with a corrupt one -- at the exact path the
+        // previous turn's context is still telling the model to read.
+        const std::string temp_path = path + ".part";
         FILE* f = nullptr;
-        if (fopen_s(&f, path.c_str(), "wb") != 0 || f == nullptr) return quiet_success();
+        if (fopen_s(&f, temp_path.c_str(), "wb") != 0 || f == nullptr) {
+            return quiet_success();
+        }
         const size_t wrote = std::fwrite(shot.data.data(), 1, shot.data.size(), f);
         std::fclose(f);
-        if (wrote != shot.data.size()) return quiet_success();
+        if (wrote != shot.data.size()) {
+            DeleteFileA(temp_path.c_str());
+            return quiet_success();
+        }
+        if (!MoveFileExA(temp_path.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            DeleteFileA(temp_path.c_str());
+            return quiet_success();
+        }
 
         const std::string text = context_text(path, shot, index, enumerate_monitors());
         std::printf("{\"hookSpecificOutput\":{\"hookEventName\":\"%s\","
