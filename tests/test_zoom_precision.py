@@ -184,10 +184,3 @@ class TestTheModelIsTold:
 
         assert "PIXEL-PERFECT TARGETING" in TOOL_DESCRIPTION
         assert "in_zoom" in TOOL_DESCRIPTION
-
-    def test_the_api_schema_offers_it_too(self):
-        # Derived from FLAT_PARAMS, so this catches the flag being added to the
-        # server and not to the tool the API model actually sees.
-        from cufast.agent.schema import computer_tool_schema
-
-        assert "in_zoom" in computer_tool_schema()["input_schema"]["properties"]

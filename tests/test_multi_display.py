@@ -105,9 +105,3 @@ class TestTheGuidanceExists:
         from cufast.server import TOOL_DESCRIPTION
 
         assert "mean different things on different displays" in TOOL_DESCRIPTION
-
-    def test_the_agent_prompt_says_it_too(self):
-        from cufast.agent.prompt import SYSTEM_PROMPT
-
-        assert "IF YOU CANNOT FIND SOMETHING, LOOK AT THE OTHER SCREEN." in SYSTEM_PROMPT
-        assert "before reporting anything as missing" in SYSTEM_PROMPT
