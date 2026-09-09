@@ -16,13 +16,20 @@ from cufast import _native
 from cufast.session.deltas import _finite_delta
 from cufast.session.errors import ACTION_FAILURES, ActionError
 
-# How far to turn when measuring the view's response to the mouse. Big enough to
-# shift the image well clear of the noise, small enough not to fling the camera
-# somewhere unrecoverable if the sensitivity turns out to be very high.
-AIM_PROBE_NATIVE_PX = 120
-# Tried when the first probe moved too little to measure, which is what a very low
-# sensitivity looks like.
-AIM_PROBE_RETRY_PX = 600
+# How far to turn when measuring the view's response to the mouse, tried in order
+# until one measures. The first is big enough to clear the noise and small enough
+# not to fling the camera somewhere unrecoverable.
+#
+# The small rung comes second on purpose. A failed measurement has two opposite
+# causes and they look identical from here: the view barely moved (sensitivity too
+# low to see) or it moved so far that nothing in the new frame correlates with the
+# old one (sensitivity far too high). Only ever escalating assumes the first, and on
+# a very sensitive setup turns a bad probe into a worse one -- an observed session
+# escalated 120 -> 600 -> 600 and reported "turning the camera 1320 pixels did not
+# move the image measurably" while facing a detailed forest, which is exactly what
+# over-rotation looks like through a correlation window.
+AIM_PROBE_LADDER = (120, 24, 600)
+AIM_PROBE_NATIVE_PX = AIM_PROBE_LADDER[0]
 # Below this the match is not distinguishable from the average candidate, which is
 # what a featureless or repeating view produces. Accepting it would bake a wrong
 # ratio into every later aim.
@@ -168,10 +175,10 @@ class AimingMixin:
         then makes; that is why the amount turned is returned rather than hidden.
         """
         turned = 0
-        probe = AIM_PROBE_NATIVE_PX
+        probe = AIM_PROBE_LADDER[0]
         committed = False
         try:
-            for _ in range(3):
+            for attempt in range(len(AIM_PROBE_LADDER)):
                 # Counted BEFORE the measurement, not after. _measure_pan moves the
                 # mouse and then captures, so a capture that throws -- a DXGI device
                 # loss is routine -- left the probe applied and unrecorded, and the
@@ -199,8 +206,9 @@ class AimingMixin:
                         # horizontal accounting the caller relies on still holds.
                         self._calibrate_pitch()
                         return turned
-                # Too little movement means a low sensitivity, so probe further.
-                probe = AIM_PROBE_RETRY_PX
+                # Nothing measurable. Take the next rung rather than assuming which
+                # direction was wrong; the ladder covers both.
+                probe = AIM_PROBE_LADDER[min(attempt + 1, len(AIM_PROBE_LADDER) - 1)]
         finally:
             # Whatever happened -- a capture failure mid-probe, the kill switch, a
             # measurement that could not be trusted -- the view must not be left
@@ -212,10 +220,15 @@ class AimingMixin:
         raise ActionError(
             "could not work out how the mouse maps to the view: turning the camera "
             f"{turned} pixels did not move the image measurably. This happens when "
-            "the view is featureless (facing a wall or the sky) or when the "
-            "application does not respond to relative mouse movement at all. Face "
-            "something with visible detail and try again, or set the ratio yourself "
-            "with calibrate."
+            "the view is featureless (facing a wall or the sky), when the "
+            "application does not respond to relative mouse movement at all, or "
+            "when the view is so sensitive that the probe span it past anything "
+            "recognisable. Face something with visible detail and try again. To "
+            "set it by hand instead, use calibrate with AIM_RATIO -- that is the "
+            "one `aim` needs, and look_degrees_per_pixel does not substitute for "
+            "it. aim_ratio is native mouse pixels per screenshot pixel of "
+            "on-screen movement: turn by a known amount, see how far the image "
+            "shifted, and divide."
         )
 
 

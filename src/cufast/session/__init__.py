@@ -11,7 +11,6 @@ from cufast.session.aiming import (
     AIM_MIN_CONFIDENCE,
     AIM_MIN_SHIFT_PX,
     AIM_PROBE_NATIVE_PX,
-    AIM_PROBE_RETRY_PX,
     AIM_RATIO_BOUNDS,
     AimingMixin,
 )
@@ -30,7 +29,6 @@ __all__ = [
     "AIM_MIN_CONFIDENCE",
     "AIM_MIN_SHIFT_PX",
     "AIM_PROBE_NATIVE_PX",
-    "AIM_PROBE_RETRY_PX",
     "AIM_RATIO_BOUNDS",
     "MAX_NATIVE_DELTA",
     "STOPPED_BY_KILL_SWITCH",
