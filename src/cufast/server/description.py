@@ -33,9 +33,11 @@ not run and are reported as such.
 
 Use one or the other, not both in the same call.
 
-A screenshot is appended automatically after the last action unless the call already
-ends with `screenshot` or `zoom`, or you pass auto_screenshot=false. That saves the
-round trip you would otherwise spend asking what happened.
+Pass auto_screenshot=true and a screenshot is appended automatically after the last
+action, unless the call already ends with `screenshot` or `zoom` -- that saves the
+round trip you would otherwise spend asking what happened. Pass auto_screenshot=false
+to skip it even then. Whichever you omit, this server's own default for a call that
+leaves it out is stated below, at the end of this description.
 
 CANNOT FIND SOMETHING? CHECK THE OTHER SCREEN. This machine may have more than one
 display, and you are only ever looking at one of them. Every screenshot is labelled
@@ -268,3 +270,19 @@ Dropdowns and scrollbars are often easier to drive with keyboard shortcuts than 
 the mouse. If an action does not appear to have worked, take a screenshot and check
 before continuing rather than assuming.
 """
+
+
+def tool_description(auto_screenshot_default: bool) -> str:
+    """TOOL_DESCRIPTION plus the one fact that depends on how this server was
+    started: what a call gets when it omits auto_screenshot.
+
+    That default is not fixed in the prose above because it is not fixed in the
+    server: the plugin turns it on (its hooks and skill already assume a trailing
+    screenshot exists), while a bare `claude mcp add` install leaves it off, since
+    nothing there is putting a screenshot in front of the model between calls.
+    """
+    state = "true" if auto_screenshot_default else "false"
+    return TOOL_DESCRIPTION + (
+        f"\nOn THIS server, a call that omits auto_screenshot behaves as if it "
+        f"passed auto_screenshot={state}.\n"
+    )

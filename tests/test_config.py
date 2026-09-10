@@ -12,13 +12,21 @@ class TestEnvParsing:
         for name in (
             "CUFAST_DISPLAY", "CUFAST_MAX_WIDTH", "CUFAST_MAX_HEIGHT",
             "CUFAST_JPEG_QUALITY", "CUFAST_DRAW_CURSOR", "CUFAST_CAPTURE_TIMEOUT_MS",
-            "CUFAST_SETTLE_MS",
+            "CUFAST_SETTLE_MS", "CUFAST_AUTO_SCREENSHOT",
         ):
             monkeypatch.delenv(name, raising=False)
         cfg = Config.from_env()
         assert (cfg.max_width, cfg.max_height) == (1024, 768)
         assert cfg.display_index == 0
         assert cfg.draw_cursor is True
+        # Off unless something turns it on. A bare `claude mcp add` install has
+        # nothing else putting a screenshot in front of the model, so it must not
+        # start appending one uninvited; only the plugin's .mcp.json sets this.
+        assert cfg.auto_screenshot_default is False
+
+    def test_plugin_turns_on_auto_screenshot_by_default(self, monkeypatch):
+        monkeypatch.setenv("CUFAST_AUTO_SCREENSHOT", "true")
+        assert Config.from_env().auto_screenshot_default is True
 
     def test_empty_string_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("CUFAST_MAX_WIDTH", "   ")

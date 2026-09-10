@@ -51,11 +51,13 @@ There is no sandbox. Clicks and keystrokes go to your real machine, so the model
 claude mcp add cufast -- /full/path/to/.venv/Scripts/python.exe -m cufast.server
 ```
 
-Gives you `computer` and `screen_info`.
+Gives you `computer` and `screen_info`. Nothing here puts a screenshot in front of
+the model between calls, so `auto_screenshot` defaults to `false`: a call gets back
+only what it explicitly asked for, unless it passes `auto_screenshot=true` itself.
 
 ### Plugin
 
-The same server, plus a hook that captures the screen before every turn and a skill covering batching, zoom and monitor switching.
+The same server, plus a hook that captures the screen before every turn and a skill covering batching, zoom and monitor switching. Its `.mcp.json` sets `CUFAST_AUTO_SCREENSHOT=true`, so here `auto_screenshot` defaults to `true` instead -- the hooks and skill already assume a trailing screenshot exists.
 
 ```bash
 cmake --build build/cli --config Release
@@ -87,7 +89,7 @@ Batch actions into one call. A click, the text after it and the confirming scree
 }
 ```
 
-A screenshot is appended automatically unless the batch already ends with one. Every coordinate is in screenshot space, never native pixels: a 1920x1080 display gives a 1024x576 frame by default.
+A screenshot is appended automatically after the batch when `auto_screenshot` is on, unless the batch already ends with one -- see [Install](#install) for which way that defaults for you. Every coordinate is in screenshot space, never native pixels: a 1920x1080 display gives a 1024x576 frame by default.
 
 ## Configuration
 
@@ -102,6 +104,7 @@ A screenshot is appended automatically unless the batch already ends with one. E
 | `CUFAST_LOCK_DISPLAY` | `false` | Makes the display a boundary, not a default |
 | `CUFAST_CAPTURE_TIMEOUT_MS` | `16` | One frame at 60Hz |
 | `CUFAST_SETTLE_MS` | `40` | Pause after a UI-mutating action |
+| `CUFAST_AUTO_SCREENSHOT` | `false` | Default for a call that omits `auto_screenshot`; the plugin sets this `true` |
 
 ## License
 

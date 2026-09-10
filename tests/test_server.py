@@ -129,7 +129,9 @@ class TestComputerTool:
 
     def test_batch_appends_a_screenshot(self, tool):
         server, _ = tool
-        result = self.call(server, {"actions": [{"action": "cursor_position"}]})
+        result = self.call(
+            server, {"actions": [{"action": "cursor_position"}], "auto_screenshot": True}
+        )
         assert any(b.type == "image" for b in result.content)
 
     def test_malformed_batch_is_a_protocol_error(self, tool):
@@ -165,10 +167,29 @@ class TestComputerTool:
         assert any(b.type == "image" for b in result.content)
         assert "BATCH FAILED" in result.content[0].text
 
+    def test_omitting_auto_screenshot_follows_the_server_default(self, monkeypatch,
+                                                                  fake_screen, fake_input):
+        # A call that leaves auto_screenshot out must not silently behave as if it
+        # passed true: whether it gets a trailing screenshot has to come from this
+        # server's own configuration, which is what tells a plugin install apart
+        # from a bare `claude mcp add` one.
+        monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
+        off = build_server(Config(max_width=1024, max_height=768, settle_ms=0,
+                                  auto_screenshot_default=False))
+        result = self.call(off, {"actions": [{"action": "cursor_position"}]})
+        assert not any(b.type == "image" for b in result.content)
+
+        on = build_server(Config(max_width=1024, max_height=768, settle_ms=0,
+                                 auto_screenshot_default=True))
+        result = self.call(on, {"actions": [{"action": "cursor_position"}]})
+        assert any(b.type == "image" for b in result.content)
+
     def test_a_failing_capture_does_not_discard_the_batch(self, tool):
         server, screen = tool
         screen.raise_on_grab = RuntimeError("DXGI: device removed")
-        result = self.call(server, {"actions": [{"action": "cursor_position"}]})
+        result = self.call(
+            server, {"actions": [{"action": "cursor_position"}], "auto_screenshot": True}
+        )
         text = " ".join(b.text for b in result.content if b.type == "text")
         # The cursor_position result must survive, and the real cause must be visible
         # rather than collapsed into "Error executing tool computer".
