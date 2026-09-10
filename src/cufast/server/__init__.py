@@ -12,10 +12,10 @@ surface over both.
 from __future__ import annotations
 
 from cufast.server.app import build_server, main
-from cufast.server.description import TOOL_DESCRIPTION
+from cufast.server.description import TOOL_DESCRIPTION, tool_description
 from cufast.server.harness import Harness
 
-__all__ = ["TOOL_DESCRIPTION", "Harness", "build_server", "main"]
+__all__ = ["TOOL_DESCRIPTION", "Harness", "build_server", "main", "tool_description"]
 
 
 if __name__ == "__main__":  # pragma: no cover - module entry point

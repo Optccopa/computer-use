@@ -13,7 +13,7 @@ from mcp.types import ImageContent, TextContent
 
 from cufast.actions import batch_from_call
 from cufast.config import Config
-from cufast.server.description import TOOL_DESCRIPTION
+from cufast.server.description import tool_description
 from cufast.server.harness import Harness
 from cufast.session import ActionError
 
@@ -35,7 +35,7 @@ def build_server(config: Config | None = None) -> MCPServer:
         ),
     )
 
-    @server.tool(name="computer", description=TOOL_DESCRIPTION)
+    @server.tool(name="computer", description=tool_description(cfg.auto_screenshot_default))
     async def computer(
         action: str | None = None,
         actions: list[dict[str, Any]] | None = None,
@@ -55,7 +55,7 @@ def build_server(config: Config | None = None) -> MCPServer:
         aim_ratio: float | None = None,
         look_degrees_per_pixel: float | None = None,
         in_zoom: bool | None = None,
-        auto_screenshot: bool = True,
+        auto_screenshot: bool = cfg.auto_screenshot_default,
         display: int | None = None,
     ) -> list[TextContent | ImageContent]:
         # `action` with its parameters alongside it is the standard computer tool's

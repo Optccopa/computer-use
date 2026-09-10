@@ -86,6 +86,15 @@ class Config:
     # batch, giving the UI a chance to repaint. Overridden per call by wait actions.
     settle_ms: int = 40
 
+    # The `computer` tool's own default for auto_screenshot, i.e. what happens when a
+    # call omits it. Off by default: a bare `claude mcp add` install has no way to
+    # look at what a call produced except the image it returns, so appending one
+    # uninvited is a silent cost on every call. The plugin sets CUFAST_AUTO_SCREENSHOT
+    # in its own .mcp.json, because its hooks already put a screenshot in front of the
+    # model every turn and its skill is written assuming the trailing capture is
+    # there. Either way a call can always override this explicitly.
+    auto_screenshot_default: bool = False
+
     def __post_init__(self) -> None:
         # Validating here rather than only in from_env() matters: build_server()
         # accepts a caller-supplied Config, and an unvalidated one reaches the native
@@ -104,6 +113,7 @@ class Config:
             lock_display=_env_bool("CUFAST_LOCK_DISPLAY", False),
             capture_timeout_ms=_env_int("CUFAST_CAPTURE_TIMEOUT_MS", 16),
             settle_ms=_env_int("CUFAST_SETTLE_MS", 40),
+            auto_screenshot_default=_env_bool("CUFAST_AUTO_SCREENSHOT", False),
         )
         return cfg
 

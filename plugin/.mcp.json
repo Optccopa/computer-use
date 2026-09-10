@@ -3,7 +3,9 @@
     "cufast": {
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/cufast-mcp.cmd",
       "args": [],
-      "env": {}
+      "env": {
+        "CUFAST_AUTO_SCREENSHOT": "true"
+      }
     }
   }
 }

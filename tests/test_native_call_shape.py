@@ -167,3 +167,29 @@ class TestTheDescriptionLeadsWithTheFamiliarShape:
 
         assert '{"action": "type", "text": "hello"}' in TOOL_DESCRIPTION
         assert '"actions": [' in TOOL_DESCRIPTION
+
+
+class TestTheDescriptionStatesThisServersAutoScreenshotDefault:
+    """auto_screenshot=<default> is not fixed prose: it is whichever way this
+    particular server was started, so the description has to say which."""
+
+    def test_states_true_when_the_server_turns_it_on(self):
+        from cufast.server import tool_description
+
+        assert "auto_screenshot=true" in tool_description(True)
+
+    def test_states_false_when_the_server_leaves_it_off(self):
+        from cufast.server import tool_description
+
+        assert "auto_screenshot=false" in tool_description(False)
+
+    def test_the_computer_tool_reports_it_through_the_real_server(self, monkeypatch,
+                                                                   fake_screen, fake_input):
+        from cufast import _native
+        from cufast.config import Config
+        from cufast.server import build_server
+
+        monkeypatch.setattr(_native, "Screen", lambda index: fake_screen, raising=True)
+        server = build_server(Config(settle_ms=0, auto_screenshot_default=True))
+        tool = next(t for t in asyncio.run(server.list_tools()) if t.name == "computer")
+        assert "auto_screenshot=true" in tool.description
